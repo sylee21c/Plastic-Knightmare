@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -6,17 +6,95 @@ using UnityEngine.InputSystem;
 
 public sealed class BuildingModeController : MonoBehaviour
 {
+    private enum BrickOrientation
+    {
+        Horizontal,
+        Vertical
+    }
+
+    private enum HalfCellSide
+    {
+        None,
+        Negative,
+        Positive
+    }
+
+    [System.Serializable]
+    private sealed class BrickDefinition
+    {
+        [SerializeField] private string displayName = "2x2";
+        [SerializeField] private GameObject prefab;
+        [SerializeField, Min(1)] private int cellsLong = 1;
+        [SerializeField] private bool halfCell;
+
+        public string DisplayName => displayName;
+        public GameObject Prefab => prefab;
+        public int CellsLong => Mathf.Max(1, cellsLong);
+        public bool HalfCell => halfCell;
+        public bool CanRotate => halfCell || CellsLong > 1;
+    }
+
+    private readonly struct PlacementKey
+    {
+        public readonly Vector2Int Cell;
+        public readonly HalfCellSide HalfSide;
+
+        public PlacementKey(Vector2Int cell, HalfCellSide halfSide)
+        {
+            Cell = cell;
+            HalfSide = halfSide;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is PlacementKey other && Cell == other.Cell && HalfSide == other.HalfSide;
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 31 + Cell.x;
+                hash = hash * 31 + Cell.y;
+                hash = hash * 31 + (int)HalfSide;
+                return hash;
+            }
+        }
+    }
+
+    private readonly struct Placement
+    {
+        public readonly Vector2Int AnchorCell;
+        public readonly Vector3 Center;
+        public readonly PlacementKey[] Keys;
+        public readonly HalfCellSide HalfSide;
+
+        public Placement(Vector2Int anchorCell, Vector3 center, PlacementKey[] keys, HalfCellSide halfSide)
+        {
+            AnchorCell = anchorCell;
+            Center = center;
+            Keys = keys;
+            HalfSide = halfSide;
+        }
+    }
+
     [SerializeField] private string playerName = "Player";
     [SerializeField] private BuildingGridOverlay gridOverlay;
     [SerializeField] private GameObject brickPrefab;
     [SerializeField] private string sceneBrickTemplateName = "Lego_Part_3";
+    [SerializeField] private BrickDefinition[] brickDefinitions =
+    {
+        new BrickDefinition(),
+        new BrickDefinition()
+    };
     [SerializeField] private float brickYOffset = 0f;
     [SerializeField] private float stackOverlapY = 0.0473111f;
     [SerializeField] private bool requireDetectedFloorCell = false;
     [SerializeField] private Color previewColor = new Color(1f, 1f, 1f, 0.36f);
     [SerializeField] private Color blockedPreviewColor = new Color(1f, 0.25f, 0.2f, 0.3f);
 
-    private readonly Dictionary<Vector2Int, List<GameObject>> placedBricks = new Dictionary<Vector2Int, List<GameObject>>();
+    private readonly Dictionary<PlacementKey, List<GameObject>> placedBricks = new Dictionary<PlacementKey, List<GameObject>>();
 
     private Transform player;
     private Camera sceneCamera;
@@ -24,26 +102,47 @@ public sealed class BuildingModeController : MonoBehaviour
     private Material previewMaterial;
     private GameObject previewTemplate;
     private Vector2Int highlightedCell;
+    private Vector3 highlightedFloorPoint;
     private bool hasHighlightedCell;
     private bool canBuildOnHighlightedCell;
     private bool previousLeftMousePressed;
     private bool previousRightMousePressed;
     private bool queuedLeftClickBuild;
     private bool queuedRightClickDestroy;
+    private bool isDragSelecting;
+    private Vector2Int dragAnchorCell;
+    private readonly List<GameObject> dragGhostBricks = new List<GameObject>();
+    private readonly List<Vector3> dragGhostOriginalScales = new List<Vector3>();
+    private Material dragGhostMaterial;
+    private int dragGhostBrickIndex = -1;
+    private int selectedBrickIndex = 0;
+    private BrickOrientation selectedOrientation = BrickOrientation.Horizontal;
+    private const int HotbarSlotCount = 5;
 
     private void Awake()
     {
         FindReferences();
-        RefreshPreviewBrick();
         BuildingHotbarUI.EnsureExists();
+        BuildingHotbarUI.SetSelectedSlot(selectedBrickIndex);
+        RefreshPreviewBrick(true);
+    }
+
+    private void OnDisable()
+    {
+        if (previewBrick != null)
+        {
+            previewBrick.SetActive(false);
+        }
     }
 
     private void Update()
     {
         FindReferences();
-        RefreshPreviewBrick();
+        HandleSelectionInput();
+        RefreshPreviewBrick(false);
         UpdateHighlight();
         HandleBuildInput();
+        UpdateDragSelect();
         HandleDestroyInput();
     }
 
@@ -97,31 +196,87 @@ public sealed class BuildingModeController : MonoBehaviour
         }
     }
 
+    private void HandleSelectionInput()
+    {
+        int selectableSlots = Mathf.Max(HotbarSlotCount, brickDefinitions?.Length ?? 0);
+        for (int i = 0; i < selectableSlots; i++)
+        {
+            if (WasNumberKeyPressed(i + 1))
+            {
+                SelectBrick(i);
+                return;
+            }
+        }
+
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        if (selectedBrick != null && selectedBrick.CanRotate && WasRotateKeyPressed())
+        {
+            selectedOrientation = selectedOrientation == BrickOrientation.Horizontal
+                ? BrickOrientation.Vertical
+                : BrickOrientation.Horizontal;
+        }
+    }
+
+    private void SelectBrick(int index)
+    {
+        int selectableSlots = Mathf.Max(HotbarSlotCount, brickDefinitions?.Length ?? 1);
+        int clampedIndex = Mathf.Clamp(index, 0, selectableSlots - 1);
+        if (selectedBrickIndex == clampedIndex)
+        {
+            return;
+        }
+
+        selectedBrickIndex = clampedIndex;
+        if (GetSelectedBrick()?.CanRotate != true)
+        {
+            selectedOrientation = BrickOrientation.Horizontal;
+        }
+
+        BuildingHotbarUI.SetSelectedSlot(selectedBrickIndex);
+        RefreshPreviewBrick(true);
+    }
+
     private void UpdateHighlight()
     {
-        hasHighlightedCell = TryGetTargetCell(out highlightedCell);
-        canBuildOnHighlightedCell =
-            hasHighlightedCell &&
-            (!requireDetectedFloorCell || gridOverlay.IsCellOnFloor(highlightedCell));
+        hasHighlightedCell = TryGetTargetCell(out highlightedCell, out highlightedFloorPoint);
+        canBuildOnHighlightedCell = false;
+
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        Placement placement = default;
+        bool hasPlacement = selectedBrick != null && hasHighlightedCell;
+        if (hasPlacement)
+        {
+            hasPlacement = TryGetPlacement(selectedBrick, out placement);
+        }
+
+        if (hasPlacement)
+        {
+            canBuildOnHighlightedCell = IsPlacementAllowed(placement);
+        }
 
         if (previewBrick == null)
         {
             return;
         }
 
-        previewBrick.SetActive(hasHighlightedCell);
-        if (!hasHighlightedCell)
+        previewBrick.SetActive(hasPlacement && !isDragSelecting);
+        if (!hasPlacement)
         {
             return;
         }
 
-        PlaceBrickOnCell(previewBrick, highlightedCell, GetStackCount(highlightedCell));
-        previewMaterial.color = canBuildOnHighlightedCell ? previewColor : blockedPreviewColor;
+        int stackIndex = GetStackCount(placement.Keys);
+        PlaceBrick(previewBrick, selectedBrick, placement, stackIndex);
+        if (previewMaterial != null)
+        {
+            previewMaterial.color = canBuildOnHighlightedCell ? previewColor : blockedPreviewColor;
+        }
     }
 
-    private bool TryGetTargetCell(out Vector2Int targetCell)
+    private bool TryGetTargetCell(out Vector2Int targetCell, out Vector3 floorPoint)
     {
         targetCell = default;
+        floorPoint = default;
         if (player == null || gridOverlay == null || gridOverlay.CellSize <= 0f)
         {
             return false;
@@ -139,32 +294,288 @@ public sealed class BuildingModeController : MonoBehaviour
             return false;
         }
 
-        Vector3 floorPoint = ray.GetPoint(enter);
+        floorPoint = ray.GetPoint(enter);
         targetCell = gridOverlay.WorldToCell(floorPoint);
+        return true;
+    }
+
+    private bool TryGetPlacement(BrickDefinition brick, out Placement placement)
+    {
+        placement = default;
+        if (gridOverlay == null || gridOverlay.CellSize <= 0f)
+        {
+            return false;
+        }
+
+        if (brick.HalfCell)
+        {
+            HalfCellSide side = GetHalfCellSide(highlightedCell, highlightedFloorPoint);
+            Vector3 center = gridOverlay.CellToWorldCenter(highlightedCell);
+            float offset = gridOverlay.CellSize * 0.25f;
+            if (selectedOrientation == BrickOrientation.Vertical)
+            {
+                center.x += side == HalfCellSide.Negative ? -offset : offset;
+            }
+            else
+            {
+                center.z += side == HalfCellSide.Negative ? -offset : offset;
+            }
+
+            placement = new Placement(
+                highlightedCell,
+                center,
+                new[] { new PlacementKey(highlightedCell, side) },
+                side);
+            return true;
+        }
+
+        PlacementKey[] keys = new PlacementKey[brick.CellsLong];
+        Vector3 centerSum = Vector3.zero;
+        for (int i = 0; i < brick.CellsLong; i++)
+        {
+            Vector2Int cell = highlightedCell + GetCellOffset(i);
+            keys[i] = new PlacementKey(cell, HalfCellSide.None);
+            centerSum += gridOverlay.CellToWorldCenter(cell);
+        }
+
+        placement = new Placement(highlightedCell, centerSum / brick.CellsLong, keys, HalfCellSide.None);
+        return true;
+    }
+
+    private Vector2Int GetCellOffset(int distance)
+    {
+        return selectedOrientation == BrickOrientation.Horizontal
+            ? new Vector2Int(distance, 0)
+            : new Vector2Int(0, distance);
+    }
+
+    private HalfCellSide GetHalfCellSide(Vector2Int cell, Vector3 floorPoint)
+    {
+        Vector3 center = gridOverlay.CellToWorldCenter(cell);
+        if (selectedOrientation == BrickOrientation.Vertical)
+        {
+            return floorPoint.x < center.x ? HalfCellSide.Negative : HalfCellSide.Positive;
+        }
+
+        return floorPoint.z < center.z ? HalfCellSide.Negative : HalfCellSide.Positive;
+    }
+
+    private bool IsPlacementAllowed(Placement placement)
+    {
+        if (!requireDetectedFloorCell)
+        {
+            return true;
+        }
+
+        foreach (PlacementKey key in placement.Keys)
+        {
+            if (!gridOverlay.IsCellOnFloor(key.Cell))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
     private void HandleBuildInput()
     {
         if (!WasLeftMousePressed() && !queuedLeftClickBuild)
-        {
             return;
-        }
 
         queuedLeftClickBuild = false;
 
-        GameObject template = ResolveBrickTemplate();
-        if (!canBuildOnHighlightedCell || template == null)
+        // Shift + 클릭 → 직사각형 드래그 선택 시작 (배치는 마우스 놓을 때)
+        if (IsShiftHeld() && hasHighlightedCell)
         {
+            isDragSelecting = true;
+            dragAnchorCell = highlightedCell;
+            dragGhostBrickIndex = -1;
             return;
         }
 
-        Vector3 position = gridOverlay.CellToWorldCenter(highlightedCell);
-        GameObject brick = Instantiate(template, position, Quaternion.identity);
-        brick.name = $"{template.name}_Built";
+        // 일반 클릭 → 단일 배치
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        GameObject template = ResolveBrickTemplate(selectedBrick);
+        if (!canBuildOnHighlightedCell || selectedBrick == null || template == null
+            || !TryGetPlacement(selectedBrick, out Placement placement))
+            return;
+
+        SpawnBrick(selectedBrick, template, placement);
+    }
+
+    private void UpdateDragSelect()
+    {
+        if (!isDragSelecting)
+            return;
+
+        // Shift를 놓으면 취소
+        if (!IsShiftHeld())
+        {
+            ClearDragGhosts();
+            isDragSelecting = false;
+            return;
+        }
+
+        // 마우스를 놓으면 배치 확정
+        if (!IsLeftMouseHeld())
+        {
+            CommitDragSelect();
+            isDragSelecting = false;
+            return;
+        }
+
+        if (hasHighlightedCell)
+            RefreshDragGhosts();
+    }
+
+    private void CommitDragSelect()
+    {
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        if (selectedBrick == null) return;
+
+        GameObject template = ResolveBrickTemplate(selectedBrick);
+        if (template == null) return;
+
+        Vector2Int currentCell = hasHighlightedCell ? highlightedCell : dragAnchorCell;
+        List<Vector2Int> cells = GetRectangleCells(dragAnchorCell, currentCell);
+
+        foreach (Vector2Int cell in cells)
+        {
+            if (!TryGetPlacementForCell(selectedBrick, cell, out Placement placement))
+                continue;
+            if (!IsPlacementAllowed(placement))
+                continue;
+            SpawnBrick(selectedBrick, template, placement);
+        }
+
+        ClearDragGhosts();
+    }
+
+    private void RefreshDragGhosts()
+    {
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        if (selectedBrick == null) { ClearDragGhosts(); return; }
+
+        // 브릭 타입이 바뀌면 풀 초기화
+        if (dragGhostBrickIndex != selectedBrickIndex)
+        {
+            ClearDragGhosts();
+            dragGhostBrickIndex = selectedBrickIndex;
+        }
+
+        List<Vector2Int> cells = GetRectangleCells(dragAnchorCell, highlightedCell);
+        GameObject template = ResolveBrickTemplate(selectedBrick);
+        if (template == null) { ClearDragGhosts(); return; }
+
+        EnsureDragGhostMaterial();
+
+        // 풀 확장
+        while (dragGhostBricks.Count < cells.Count)
+        {
+            GameObject ghost = Instantiate(template, transform);
+            ghost.SetActive(false);
+            foreach (Collider col in ghost.GetComponentsInChildren<Collider>()) Destroy(col);
+            foreach (BuildingPlacedBrick m in ghost.GetComponentsInChildren<BuildingPlacedBrick>()) Destroy(m);
+            foreach (Renderer r in ghost.GetComponentsInChildren<Renderer>())
+            {
+                r.sharedMaterial = dragGhostMaterial;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+            }
+            dragGhostBricks.Add(ghost);
+            dragGhostOriginalScales.Add(ghost.transform.localScale);
+        }
+
+        // 활성 고스트 배치
+        for (int i = 0; i < cells.Count; i++)
+        {
+            if (!TryGetPlacementForCell(selectedBrick, cells[i], out Placement placement))
+            {
+                dragGhostBricks[i].SetActive(false);
+                continue;
+            }
+            dragGhostBricks[i].SetActive(true);
+            dragGhostBricks[i].transform.localScale = dragGhostOriginalScales[i];
+            PlaceBrick(dragGhostBricks[i], selectedBrick, placement, GetStackCount(placement.Keys));
+        }
+
+        // 초과 고스트 비활성
+        for (int i = cells.Count; i < dragGhostBricks.Count; i++)
+            dragGhostBricks[i].SetActive(false);
+    }
+
+    private void ClearDragGhosts()
+    {
+        foreach (GameObject ghost in dragGhostBricks)
+            if (ghost != null) Destroy(ghost);
+        dragGhostBricks.Clear();
+        dragGhostOriginalScales.Clear();
+    }
+
+    private void EnsureDragGhostMaterial()
+    {
+        if (dragGhostMaterial != null) return;
+        dragGhostMaterial = new Material(FindPreviewShader())
+        {
+            name = "Drag Ghost Material",
+            color = previewColor
+        };
+        ConfigurePreviewMaterial(dragGhostMaterial);
+    }
+
+    private bool TryGetPlacementForCell(BrickDefinition brick, Vector2Int cell, out Placement placement)
+    {
+        placement = default;
+        if (gridOverlay == null || gridOverlay.CellSize <= 0f) return false;
+
+        if (brick.HalfCell)
+        {
+            HalfCellSide side = HalfCellSide.Negative;
+            Vector3 center = gridOverlay.CellToWorldCenter(cell);
+            float offset = gridOverlay.CellSize * 0.25f;
+            if (selectedOrientation == BrickOrientation.Vertical)
+                center.x -= offset;
+            else
+                center.z -= offset;
+
+            placement = new Placement(cell, center, new[] { new PlacementKey(cell, side) }, side);
+            return true;
+        }
+
+        PlacementKey[] keys = new PlacementKey[brick.CellsLong];
+        Vector3 centerSum = Vector3.zero;
+        for (int i = 0; i < brick.CellsLong; i++)
+        {
+            Vector2Int c = cell + GetCellOffset(i);
+            keys[i] = new PlacementKey(c, HalfCellSide.None);
+            centerSum += gridOverlay.CellToWorldCenter(c);
+        }
+        placement = new Placement(cell, centerSum / brick.CellsLong, keys, HalfCellSide.None);
+        return true;
+    }
+
+    private static List<Vector2Int> GetRectangleCells(Vector2Int anchor, Vector2Int current)
+    {
+        int minX = Mathf.Min(anchor.x, current.x);
+        int maxX = Mathf.Max(anchor.x, current.x);
+        int minY = Mathf.Min(anchor.y, current.y);
+        int maxY = Mathf.Max(anchor.y, current.y);
+
+        List<Vector2Int> cells = new List<Vector2Int>((maxX - minX + 1) * (maxY - minY + 1));
+        for (int x = minX; x <= maxX; x++)
+            for (int y = minY; y <= maxY; y++)
+                cells.Add(new Vector2Int(x, y));
+        return cells;
+    }
+
+    private void SpawnBrick(BrickDefinition selectedBrick, GameObject template, Placement placement)
+    {
+        GameObject brick = Instantiate(template, placement.Center, Quaternion.identity);
+        brick.name = $"{template.name}_{selectedBrick.DisplayName}_Built";
         brick.SetActive(true);
-        int stackIndex = GetStackCount(highlightedCell);
-        PlaceBrickOnCell(brick, highlightedCell, stackIndex);
+        int stackIndex = GetStackCount(placement.Keys);
+        PlaceBrick(brick, selectedBrick, placement, stackIndex);
 
         BuildingPlacedBrick marker = brick.GetComponent<BuildingPlacedBrick>();
         if (marker == null)
@@ -172,30 +583,88 @@ public sealed class BuildingModeController : MonoBehaviour
             marker = brick.AddComponent<BuildingPlacedBrick>();
         }
 
-        marker.Cell = highlightedCell;
+        marker.Cell = placement.AnchorCell;
         marker.StackIndex = stackIndex;
         EnsureClickableCollider(brick);
-        GetOrCreateStack(highlightedCell).Add(brick);
+        AddBrickToStacks(brick, placement.Keys);
     }
 
-    private void PlaceBrickOnCell(GameObject brick, Vector2Int cell, int stackIndex)
+    private void PlaceBrick(GameObject brick, BrickDefinition definition, Placement placement, int stackIndex)
     {
-        brick.transform.position = gridOverlay.CellToWorldCenter(cell);
-        FitBrickToCell(brick, gridOverlay.CellSize);
-        MoveBottomToSurface(brick, gridOverlay.SurfaceY + brickYOffset);
+        brick.transform.rotation = Quaternion.Euler(0f, GetRotationY(definition), 0f);
+        brick.transform.position = placement.Center;
+        FitBrickToFootprint(brick, GetTargetFootprint(definition), GetRotationY(definition));
+        CenterBrickOnFootprint(brick, placement.Center);
+        MoveBottomToSurface(brick, GetPlacementSurface(placement.Keys));
+    }
 
-        if (stackIndex > 0)
+    private static void CenterBrickOnFootprint(GameObject brick, Vector3 targetCenter)
+    {
+        if (!TryGetRendererBounds(brick, out Bounds bounds))
         {
-            float stackStep = Mathf.Max(0f, GetBrickHeight(brick) - stackOverlapY);
-            brick.transform.position += Vector3.up * (stackStep * stackIndex);
+            return;
         }
+
+        Vector3 offset = bounds.center - targetCenter;
+        offset.y = 0f;
+        brick.transform.position -= offset;
     }
 
-    private GameObject ResolveBrickTemplate()
+    private Vector2 GetTargetFootprint(BrickDefinition definition)
     {
-        if (brickPrefab != null)
+        float cellSize = gridOverlay.CellSize;
+        if (definition.HalfCell)
+        {
+            return selectedOrientation == BrickOrientation.Horizontal
+                ? new Vector2(cellSize, cellSize * 0.5f)
+                : new Vector2(cellSize * 0.5f, cellSize);
+        }
+
+        return selectedOrientation == BrickOrientation.Horizontal
+            ? new Vector2(cellSize * definition.CellsLong, cellSize)
+            : new Vector2(cellSize, cellSize * definition.CellsLong);
+    }
+
+    private float GetRotationY(BrickDefinition definition)
+    {
+        if (!definition.CanRotate)
+        {
+            return 0f;
+        }
+
+        return selectedOrientation == BrickOrientation.Horizontal ? 0f : 90f;
+    }
+
+    private BrickDefinition GetSelectedBrick()
+    {
+        if (brickDefinitions == null || brickDefinitions.Length == 0)
+        {
+            return null;
+        }
+
+        if (selectedBrickIndex < 0 || selectedBrickIndex >= brickDefinitions.Length)
+        {
+            return null;
+        }
+
+        return brickDefinitions[selectedBrickIndex];
+    }
+
+    private GameObject ResolveBrickTemplate(BrickDefinition definition)
+    {
+        if (definition != null && definition.Prefab != null)
+        {
+            return definition.Prefab;
+        }
+
+        if (selectedBrickIndex == 0 && brickPrefab != null)
         {
             return brickPrefab;
+        }
+
+        if (definition == null)
+        {
+            return null;
         }
 
         if (string.IsNullOrWhiteSpace(sceneBrickTemplateName))
@@ -212,33 +681,74 @@ public sealed class BuildingModeController : MonoBehaviour
         return null;
     }
 
-    private static void FitBrickToCell(GameObject brick, float cellSize)
+    private static void FitBrickToFootprint(GameObject brick, Vector2 footprint, float rotationY)
     {
-        if (cellSize <= 0f)
+        if (footprint.x <= 0f || footprint.y <= 0f)
         {
             return;
         }
 
-        Renderer[] renderers = brick.GetComponentsInChildren<Renderer>();
+        if (!TryGetRendererBounds(brick, out Bounds bounds))
+        {
+            return;
+        }
+
+        if (bounds.size.x <= Mathf.Epsilon || bounds.size.z <= Mathf.Epsilon)
+        {
+            return;
+        }
+
+        // footprint.x = target world X, footprint.y = target world Z
+        float scaleForWorldX = footprint.x / bounds.size.x;
+        float scaleForWorldZ = footprint.y / bounds.size.z;
+
+        if (!IsValidScaleFactor(scaleForWorldX) || !IsValidScaleFactor(scaleForWorldZ))
+        {
+            return;
+        }
+
+        Vector3 scale = brick.transform.localScale;
+
+        // After 90째 Y rotation: local X ??world Z, local Z ??world X (magnitudes)
+        bool rotated90 = Mathf.Abs(Mathf.DeltaAngle(rotationY, 90f)) < 1f;
+        if (rotated90)
+        {
+            scale.x *= scaleForWorldZ;
+            scale.z *= scaleForWorldX;
+        }
+        else
+        {
+            scale.x *= scaleForWorldX;
+            scale.z *= scaleForWorldZ;
+        }
+
+        // Y scales with the narrow dimension so height stays proportional to brick thickness
+        scale.y *= Mathf.Min(scaleForWorldX, scaleForWorldZ);
+
+        brick.transform.localScale = scale;
+    }
+
+    private static bool TryGetRendererBounds(GameObject root, out Bounds bounds)
+    {
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>();
+        bounds = default;
         if (renderers.Length == 0)
         {
-            return;
+            return false;
         }
 
-        Bounds bounds = renderers[0].bounds;
+        bounds = renderers[0].bounds;
         for (int i = 1; i < renderers.Length; i++)
         {
             bounds.Encapsulate(renderers[i].bounds);
         }
 
-        float footprint = Mathf.Max(bounds.size.x, bounds.size.z);
-        if (footprint <= Mathf.Epsilon)
-        {
-            return;
-        }
+        return true;
+    }
 
-        float scaleFactor = cellSize / footprint;
-        brick.transform.localScale *= scaleFactor;
+    private static bool IsValidScaleFactor(float scaleFactor)
+    {
+        return scaleFactor > Mathf.Epsilon && !float.IsInfinity(scaleFactor) && !float.IsNaN(scaleFactor);
     }
 
     private static void MoveBottomToSurface(GameObject brick, float surfaceY)
@@ -270,41 +780,133 @@ public sealed class BuildingModeController : MonoBehaviour
 
         queuedRightClickDestroy = false;
 
-        if (!placedBricks.TryGetValue(highlightedCell, out List<GameObject> stack) || stack.Count == 0)
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        if (selectedBrick == null || !TryGetPlacement(selectedBrick, out Placement placement))
         {
-            placedBricks.Remove(highlightedCell);
             return;
         }
 
-        int topIndex = stack.Count - 1;
-        GameObject brick = stack[topIndex];
-        stack.RemoveAt(topIndex);
-
-        if (stack.Count == 0)
-        {
-            placedBricks.Remove(highlightedCell);
-        }
-
+        GameObject brick = FindTopBrick(placement.Keys);
         if (brick != null)
         {
+            RemoveBrickFromStacks(brick);
             Destroy(brick);
         }
     }
 
-    private int GetStackCount(Vector2Int cell)
+    private GameObject FindTopBrick(PlacementKey[] keys)
     {
-        return placedBricks.TryGetValue(cell, out List<GameObject> stack) ? stack.Count : 0;
-    }
-
-    private List<GameObject> GetOrCreateStack(Vector2Int cell)
-    {
-        if (!placedBricks.TryGetValue(cell, out List<GameObject> stack))
+        GameObject topBrick = null;
+        int topIndex = -1;
+        foreach (PlacementKey key in keys)
         {
-            stack = new List<GameObject>();
-            placedBricks.Add(cell, stack);
+            if (!placedBricks.TryGetValue(key, out List<GameObject> stack) || stack.Count == 0)
+            {
+                continue;
+            }
+
+            int index = stack.Count - 1;
+            if (index > topIndex)
+            {
+                topIndex = index;
+                topBrick = stack[index];
+            }
         }
 
-        return stack;
+        return topBrick;
+    }
+
+    private int GetStackCount(PlacementKey[] keys)
+    {
+        int stackCount = 0;
+        foreach (PlacementKey key in keys)
+        {
+            stackCount = Mathf.Max(stackCount, CountInStack(key));
+
+            if (key.HalfSide == HalfCellSide.None)
+            {
+                stackCount = Mathf.Max(stackCount, CountInStack(new PlacementKey(key.Cell, HalfCellSide.Negative)));
+                stackCount = Mathf.Max(stackCount, CountInStack(new PlacementKey(key.Cell, HalfCellSide.Positive)));
+            }
+            else
+            {
+                stackCount = Mathf.Max(stackCount, CountInStack(new PlacementKey(key.Cell, HalfCellSide.None)));
+            }
+        }
+
+        return stackCount;
+    }
+
+    private int CountInStack(PlacementKey key)
+    {
+        return placedBricks.TryGetValue(key, out List<GameObject> stack) ? stack.Count : 0;
+    }
+
+    private float GetPlacementSurface(PlacementKey[] keys)
+    {
+        float surface = gridOverlay.SurfaceY + brickYOffset;
+        foreach (PlacementKey key in keys)
+        {
+            surface = Mathf.Max(surface, GetTopSurfaceForKey(key));
+            if (key.HalfSide == HalfCellSide.None)
+            {
+                surface = Mathf.Max(surface, GetTopSurfaceForKey(new PlacementKey(key.Cell, HalfCellSide.Negative)));
+                surface = Mathf.Max(surface, GetTopSurfaceForKey(new PlacementKey(key.Cell, HalfCellSide.Positive)));
+            }
+            else
+            {
+                surface = Mathf.Max(surface, GetTopSurfaceForKey(new PlacementKey(key.Cell, HalfCellSide.None)));
+            }
+        }
+        return surface;
+    }
+
+    private float GetTopSurfaceForKey(PlacementKey key)
+    {
+        if (!placedBricks.TryGetValue(key, out List<GameObject> stack) || stack.Count == 0)
+        {
+            return gridOverlay.SurfaceY + brickYOffset;
+        }
+
+        GameObject topBrick = stack[stack.Count - 1];
+        if (TryGetRendererBounds(topBrick, out Bounds bounds))
+        {
+            return bounds.max.y - stackOverlapY;
+        }
+
+        return gridOverlay.SurfaceY + brickYOffset;
+    }
+
+    private void AddBrickToStacks(GameObject brick, PlacementKey[] keys)
+    {
+        foreach (PlacementKey key in keys)
+        {
+            if (!placedBricks.TryGetValue(key, out List<GameObject> stack))
+            {
+                stack = new List<GameObject>();
+                placedBricks.Add(key, stack);
+            }
+
+            stack.Add(brick);
+        }
+    }
+
+    private void RemoveBrickFromStacks(GameObject brick)
+    {
+        List<PlacementKey> emptyKeys = new List<PlacementKey>();
+        foreach (KeyValuePair<PlacementKey, List<GameObject>> pair in placedBricks)
+        {
+            pair.Value.RemoveAll(candidate => candidate == brick);
+            if (pair.Value.Count == 0)
+            {
+                emptyKeys.Add(pair.Key);
+            }
+        }
+
+        foreach (PlacementKey key in emptyKeys)
+        {
+            placedBricks.Remove(key);
+        }
     }
 
     private static float GetBrickHeight(GameObject brick)
@@ -354,10 +956,11 @@ public sealed class BuildingModeController : MonoBehaviour
             Mathf.Abs(localMax.z - localMin.z));
     }
 
-    private void RefreshPreviewBrick()
+    private void RefreshPreviewBrick(bool force)
     {
-        GameObject template = ResolveBrickTemplate();
-        if (template == null || template == previewTemplate)
+        BrickDefinition selectedBrick = GetSelectedBrick();
+        GameObject template = ResolveBrickTemplate(selectedBrick);
+        if (!force && (template == null || template == previewTemplate))
         {
             return;
         }
@@ -366,6 +969,12 @@ public sealed class BuildingModeController : MonoBehaviour
         if (previewBrick != null)
         {
             Destroy(previewBrick);
+        }
+
+        if (template == null)
+        {
+            previewBrick = null;
+            return;
         }
 
         previewBrick = Instantiate(template, transform);
@@ -442,6 +1051,34 @@ public sealed class BuildingModeController : MonoBehaviour
 #endif
     }
 
+    private bool IsShiftHeld()
+    {
+#if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null)
+            return keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER
+        return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+#else
+        return false;
+#endif
+    }
+
+    private bool IsLeftMouseHeld()
+    {
+#if ENABLE_INPUT_SYSTEM
+        Mouse mouse = Mouse.current;
+        if (mouse != null)
+            return mouse.leftButton.isPressed;
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER
+        return Input.GetMouseButton(0);
+#else
+        return false;
+#endif
+    }
+
     private bool WasLeftMousePressed()
     {
         bool pressed = false;
@@ -488,5 +1125,53 @@ public sealed class BuildingModeController : MonoBehaviour
         bool wasPressedThisFrame = pressed && !previousRightMousePressed;
         previousRightMousePressed = pressed;
         return wasPressedThisFrame;
+    }
+
+    private static bool WasNumberKeyPressed(int number)
+    {
+#if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null)
+        {
+            switch (number)
+            {
+                case 1: if (keyboard.digit1Key.wasPressedThisFrame || keyboard.numpad1Key.wasPressedThisFrame) return true; break;
+                case 2: if (keyboard.digit2Key.wasPressedThisFrame || keyboard.numpad2Key.wasPressedThisFrame) return true; break;
+                case 3: if (keyboard.digit3Key.wasPressedThisFrame || keyboard.numpad3Key.wasPressedThisFrame) return true; break;
+                case 4: if (keyboard.digit4Key.wasPressedThisFrame || keyboard.numpad4Key.wasPressedThisFrame) return true; break;
+                case 5: if (keyboard.digit5Key.wasPressedThisFrame || keyboard.numpad5Key.wasPressedThisFrame) return true; break;
+            }
+        }
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+        switch (number)
+        {
+            case 1: return Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1);
+            case 2: return Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2);
+            case 3: return Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3);
+            case 4: return Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4);
+            case 5: return Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5);
+        }
+#endif
+
+        return false;
+    }
+
+    private static bool WasRotateKeyPressed()
+    {
+#if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.rKey.wasPressedThisFrame)
+        {
+            return true;
+        }
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+        return Input.GetKeyDown(KeyCode.R);
+#else
+        return false;
+#endif
     }
 }

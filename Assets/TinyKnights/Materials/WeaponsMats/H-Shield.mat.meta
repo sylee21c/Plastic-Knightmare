@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f3b18373249ac422a822369c66375e11
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Materials/WeaponsMats/H-Shield.mat
+  uploadId: 482631

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 26eece0861c25b94cb00e4c5b75174e0
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Animations/Halberdier/HalberdAttack.anim
+  uploadId: 482631

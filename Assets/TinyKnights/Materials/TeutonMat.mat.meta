@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: cd272943305774d739d921a7edc03c3e
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Materials/TeutonMat.mat
+  uploadId: 482631

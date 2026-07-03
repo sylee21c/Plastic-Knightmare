@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 1030ad9ac8764964f84a11e3b6b42ff8
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 112000000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 299541
+  packageName: Low Poly Cozy House Interior
+  packageVersion: 1.0
+  assetPath: Assets/LP_CozyInterior_JC/Scenes/Settings/Lighting/LP_CozyInterior_Demo/LightingData.asset
+  uploadId: 702101

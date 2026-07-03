@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f4915ad9f46834e5b8bfb158e698e556
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Materials/TemplarMAT.mat
+  uploadId: 482631

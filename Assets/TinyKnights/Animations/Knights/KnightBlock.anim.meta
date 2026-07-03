@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 58187767f750e93439d63a8b1474c9c2
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Animations/Knights/KnightBlock.anim
+  uploadId: 482631

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: bd1192c4724e34bb083e98d81c7ceaf1
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Materials/WeaponsMats/SwordMAT.mat
+  uploadId: 482631

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: caaaecdb5b95849238e90ad293455bea
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 9100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Animations/HalberdierCont.controller
+  uploadId: 482631

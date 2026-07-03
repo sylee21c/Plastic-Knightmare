@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 7c4330248252a6d4d832e5d374374342
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Animations/Teutonic/TeutonRunning.anim
+  uploadId: 482631

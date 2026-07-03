@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 29d28f3cc316da54bbc24ca135a6f3cd
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 210402
+  packageName: Tiny Knights - Low Poly Characters
+  packageVersion: 1.0
+  assetPath: Assets/TinyKnights/Demo/PlatformSource/Skybox.mat
+  uploadId: 482631

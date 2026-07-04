@@ -15,16 +15,33 @@ public sealed class PlayerController : MonoBehaviour
     [SerializeField] private float groundCheckDistance = 0.12f;
 
     [Header("Combat (Night)")]
-    [SerializeField] private float attackRange = 1.5f;
     [SerializeField] private float attackDamage = 25f;
     [SerializeField] private float attackCooldown = 0.7f;
     [SerializeField] private float guardDamageMultiplier = 0.35f;
 
+    [Header("Attack Hitbox")]
+    [Tooltip("공격 애니메이션 시작 후 히트 활성화 시점 (초). 60fps 기준 프레임 10 = 0.167")]
+    [SerializeField] private float hitWindowStart = 0.167f;
+    [Tooltip("히트 비활성화 시점 (초). 60fps 기준 프레임 28 = 0.467")]
+    [SerializeField] private float hitWindowEnd = 0.467f;
+    [Tooltip("히트박스 로컬 오프셋 (X:오른쪽, Y:위, Z:앞)")]
+    [SerializeField] private Vector3 hitboxOffset = new Vector3(0f, 0.55f, 0.85f);
+    [Tooltip("히트박스 구 반경")]
+    [SerializeField] private float hitboxRadius = 0.7f;
+    [SerializeField] private LayerMask hitboxLayers = ~0;
+
+    [Header("Incapacitation (HP 소진 시)")]
+    [SerializeField] private float incapacitationDuration = 5f;
+    [SerializeField, Tooltip("초당 깜빡임 횟수 (on/off 왕복 횟수). 6이면 초당 6번 사라졌다 나타남")]
+    private float blinkFrequency = 6f;
+
     public bool IsBlocking { get; private set; }
+    public bool IsIncapacitated { get; private set; }
 
     private Rigidbody rb;
     private Animator animator;
     private CapsuleCollider capsule;
+    private Damageable damageable;
 
     private Vector3 pendingMoveDirection;
     private bool isGrounded;
@@ -32,6 +49,15 @@ public sealed class PlayerController : MonoBehaviour
     private bool wasNight;
 
     private bool lastBlocking;
+
+    private float incapacitatedTimer;
+    private Renderer[] cachedRenderers;
+
+    // 공격 스윙 상태 — 스윙 시작 후 경과 시간, 이번 스윙에서 이미 맞춘 유령 (중복 방지)
+    private bool isSwinging;
+    private float swingElapsed;
+    private readonly System.Collections.Generic.HashSet<GhostAI> hitThisSwing =
+        new System.Collections.Generic.HashSet<GhostAI>();
 
     private void Awake()
     {
@@ -61,28 +87,46 @@ public sealed class PlayerController : MonoBehaviour
 
     private void Start()
     {
-        if (animator == null)
-        {
-            Debug.LogError("[PlayerController] Animator를 찾을 수 없습니다.");
-            return;
-        }
+        // Damageable 자동 확보 → HP 소진 시 무력화 처리
+        damageable = GetComponent<Damageable>();
+        if (damageable == null) damageable = gameObject.AddComponent<Damageable>();
+        damageable.OnDeath += HandleDeath;
 
-        bool hasSpeed = false, hasAttack = false, hasBlocking = false;
+        if (GetComponent<HealthBar>() == null)
+            gameObject.AddComponent<HealthBar>();
+
+        CacheRenderers();
+
+        if (animator == null) return;
+
+        bool hasAttack = false, hasBlocking = false;
         foreach (AnimatorControllerParameter p in animator.parameters)
         {
-            if (p.name == "Speed")      hasSpeed = true;
             if (p.name == "Attack")     hasAttack = true;
             if (p.name == "IsBlocking") hasBlocking = true;
         }
-
         if (!hasAttack || !hasBlocking)
-            Debug.LogWarning($"[PlayerController] KnightCont 컨트롤러에 파라미터 누락 — " +
-                             $"Attack:{hasAttack} / IsBlocking:{hasBlocking} / Speed:{hasSpeed}\n" +
-                             "Project 창에서 KnightCont.controller 우클릭 → Reimport 하세요.");
+            Debug.LogWarning("[PlayerController] KnightCont에 Attack/IsBlocking 파라미터 누락. " +
+                             "Tools > Setup Knight Controller 실행하세요.");
     }
 
     private void Update()
     {
+        // 무력화 상태 진행 처리
+        if (IsIncapacitated)
+        {
+            incapacitatedTimer -= Time.deltaTime;
+            pendingMoveDirection = Vector3.zero;
+            if (animator != null) animator.SetFloat("Speed", 0f);
+
+            // 깜빡임: 렌더러 enabled 를 매 프레임 토글 → 셰이더 무관하게 동작
+            bool visible = ((int)(Time.time * blinkFrequency * 2f)) % 2 == 0;
+            SetRenderersVisible(visible);
+
+            if (incapacitatedTimer <= 0f) RecoverFromIncapacitation();
+            return;
+        }
+
         CheckGrounded();
 
         Vector2 input = ReadMoveInput();
@@ -96,6 +140,7 @@ public sealed class PlayerController : MonoBehaviour
             DoJump();
 
         attackTimer -= Time.deltaTime;
+        ProcessAttackSwing();
 
         // 이벤트 대신 매 프레임 직접 체크 → 이벤트 구독 실패해도 항상 정확
         bool isNight = DayNightManager.Instance != null
@@ -143,13 +188,46 @@ public sealed class PlayerController : MonoBehaviour
         if (animator != null)
             animator.SetTrigger("Attack");
 
-        Vector3 hitCenter = transform.position + transform.forward * attackRange * 0.6f + Vector3.up * 0.5f;
-        Collider[] hits = Physics.OverlapSphere(hitCenter, attackRange * 0.5f);
-        foreach (Collider hit in hits)
+        // 데미지는 즉시 X, Update 안에서 hitWindowStart~hitWindowEnd 사이에만 판정
+        isSwinging = true;
+        swingElapsed = 0f;
+        hitThisSwing.Clear();
+    }
+
+    // Update에서 매 프레임 호출. 히트 윈도우 진입 시 히트박스로 유령 판정.
+    private void ProcessAttackSwing()
+    {
+        if (!isSwinging) return;
+
+        swingElapsed += Time.deltaTime;
+
+        // 윈도우 종료 → 스윙 마감
+        if (swingElapsed > hitWindowEnd)
         {
-            GhostAI ghost = hit.GetComponentInParent<GhostAI>();
-            ghost?.TakeDamage(attackDamage);
+            isSwinging = false;
+            return;
         }
+
+        // 윈도우 시작 전이면 대기
+        if (swingElapsed < hitWindowStart) return;
+
+        Vector3 center = GetHitboxCenter();
+        Collider[] hits = Physics.OverlapSphere(center, hitboxRadius, hitboxLayers, QueryTriggerInteraction.Ignore);
+        foreach (Collider col in hits)
+        {
+            GhostAI ghost = col.GetComponentInParent<GhostAI>();
+            if (ghost == null || hitThisSwing.Contains(ghost)) continue;
+            ghost.TakeDamage(attackDamage);
+            hitThisSwing.Add(ghost);
+        }
+    }
+
+    private Vector3 GetHitboxCenter()
+    {
+        return transform.position
+             + transform.right   * hitboxOffset.x
+             + transform.up      * hitboxOffset.y
+             + transform.forward * hitboxOffset.z;
     }
 
     private void ApplyBlocking(bool blocking)
@@ -164,6 +242,9 @@ public sealed class PlayerController : MonoBehaviour
     }
 
     public float GetGuardMultiplier() => IsBlocking ? guardDamageMultiplier : 1f;
+
+    public float AttackDamage => attackDamage;
+    public void SetAttackDamage(float value) => attackDamage = Mathf.Max(0f, value);
 
     // ── 점프 / 접지 체크 ──────────────────────────────────────────
 
@@ -282,14 +363,58 @@ public sealed class PlayerController : MonoBehaviour
 #endif
     }
 
+    // ── 무력화 ────────────────────────────────────────────────────
+
+    private void HandleDeath()
+    {
+        if (IsIncapacitated) return;
+        EnterIncapacitation();
+    }
+
+    private void EnterIncapacitation()
+    {
+        IsIncapacitated = true;
+        incapacitatedTimer = incapacitationDuration;
+        ApplyBlocking(false);
+        // 알파는 Update 안에서 매 프레임 깜빡임으로 처리
+
+        // 물리 정지 (중력은 유지)
+        Vector3 v = rb.linearVelocity;
+        v.x = 0f; v.z = 0f;
+        rb.linearVelocity = v;
+    }
+
+    private void RecoverFromIncapacitation()
+    {
+        IsIncapacitated = false;
+        SetRenderersVisible(true);
+        if (damageable != null) damageable.Revive(damageable.MaxHealth);
+    }
+
+    private void SetRenderersVisible(bool visible)
+    {
+        if (cachedRenderers == null) return;
+        foreach (Renderer r in cachedRenderers)
+            if (r != null) r.enabled = visible;
+    }
+
+    private void CacheRenderers()
+    {
+        cachedRenderers = GetComponentsInChildren<Renderer>();
+    }
+
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
-        // 공격 히트박스
-        Gizmos.color = new Color(1f, 0.2f, 0.2f, 0.4f);
-        Gizmos.DrawWireSphere(
-            transform.position + transform.forward * attackRange * 0.6f + Vector3.up * 0.5f,
-            attackRange * 0.5f);
+        // 공격 히트박스 — 스윙 중 윈도우 액티브면 빨강, 아니면 옅은 빨강
+        bool activeNow = isSwinging && swingElapsed >= hitWindowStart && swingElapsed <= hitWindowEnd;
+        Gizmos.color = activeNow ? new Color(1f, 0.15f, 0.15f, 0.9f)
+                                 : new Color(1f, 0.4f, 0.4f, 0.35f);
+        Vector3 center = transform.position
+                       + transform.right   * hitboxOffset.x
+                       + transform.up      * hitboxOffset.y
+                       + transform.forward * hitboxOffset.z;
+        Gizmos.DrawWireSphere(center, hitboxRadius);
 
         // 접지 체크
         Gizmos.color = new Color(0.2f, 1f, 0.2f, 0.4f);

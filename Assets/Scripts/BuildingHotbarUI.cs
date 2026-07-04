@@ -39,6 +39,8 @@ public sealed class BuildingHotbarUI : MonoBehaviour
 
     private RectTransform[] slotBoxes;
     private Outline[] slotOutlines;
+    private Text[] slotCountTexts;
+    private BrickInventory subscribedInventory;
 
     public static void EnsureExists()
     {
@@ -109,6 +111,8 @@ public sealed class BuildingHotbarUI : MonoBehaviour
         BuildSlotsIfEmpty();
         EnsureSlotBoxes();
         RefreshSelectedSlot();
+        SubscribeInventory();
+        RefreshAllCounts();
     }
 
     private void OnValidate()
@@ -126,9 +130,56 @@ public sealed class BuildingHotbarUI : MonoBehaviour
 
     private void OnDisable()
     {
+        UnsubscribeInventory();
         if (instance == this)
         {
             instance = null;
+        }
+    }
+
+    private void SubscribeInventory()
+    {
+        if (!Application.isPlaying) return;
+        BrickInventory.EnsureExists();
+        if (subscribedInventory == BrickInventory.Instance) return;
+        UnsubscribeInventory();
+        subscribedInventory = BrickInventory.Instance;
+        if (subscribedInventory != null)
+            subscribedInventory.OnCountChanged += HandleInventoryChanged;
+    }
+
+    private void UnsubscribeInventory()
+    {
+        if (subscribedInventory != null)
+        {
+            subscribedInventory.OnCountChanged -= HandleInventoryChanged;
+            subscribedInventory = null;
+        }
+    }
+
+    private void HandleInventoryChanged(string key, int newCount)
+    {
+        if (slotCountTexts == null) return;
+        for (int i = 0; i < SlotCount && i < SlotNames.Length; i++)
+        {
+            if (SlotNames[i] == key && slotCountTexts[i] != null)
+            {
+                slotCountTexts[i].text = newCount.ToString();
+                return;
+            }
+        }
+    }
+
+    private void RefreshAllCounts()
+    {
+        if (slotCountTexts == null) return;
+        for (int i = 0; i < SlotCount && i < SlotNames.Length; i++)
+        {
+            if (slotCountTexts[i] == null) continue;
+            int count = 0;
+            if (Application.isPlaying && BrickInventory.Instance != null)
+                count = BrickInventory.Instance.GetCount(SlotNames[i]);
+            slotCountTexts[i].text = count.ToString();
         }
     }
 
@@ -267,6 +318,11 @@ public sealed class BuildingHotbarUI : MonoBehaviour
             slotOutlines = new Outline[SlotCount];
         }
 
+        if (slotCountTexts == null || slotCountTexts.Length != SlotCount)
+        {
+            slotCountTexts = new Text[SlotCount];
+        }
+
         for (int i = 0; i < SlotCount; i++)
         {
             Transform existing = parent.Find($"Slot {i + 1}");
@@ -274,6 +330,7 @@ public sealed class BuildingHotbarUI : MonoBehaviour
             {
                 slotBoxes[i] = null;
                 slotOutlines[i] = null;
+                slotCountTexts[i] = null;
                 continue;
             }
 
@@ -347,11 +404,57 @@ public sealed class BuildingHotbarUI : MonoBehaviour
         HideLegacyGeneratedImage(slotRect, SlotFillName);
         EnsureSlotNumber(slotRect, index);
         EnsureSlotIcon(slotRect, index);
+        EnsureSlotCountText(slotRect, index);
         ReparentLegacyIcon(parent, slotRect, slotName);
 
         slotBoxes[index] = slotRect;
         slotOutlines[index] = outline;
         return slotRect;
+    }
+
+    // 슬롯 우측 상단에 소지 수 표시
+    private void EnsureSlotCountText(RectTransform slotRect, int index)
+    {
+        Transform existing = slotRect.Find("Count");
+        Text countText;
+        if (existing == null)
+        {
+            GameObject go = new GameObject("Count");
+            go.transform.SetParent(slotRect, false);
+            RectTransform rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = new Vector2(1f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(1f, 1f);
+            rt.anchoredPosition = new Vector2(-4f, -4f);
+            rt.sizeDelta = new Vector2(48f, 26f);
+
+            countText = go.AddComponent<Text>();
+            countText.alignment = TextAnchor.MiddleRight;
+            countText.font = GetSlotFont();
+            countText.fontSize = 22;
+            countText.fontStyle = FontStyle.Bold;
+            countText.color = new Color(1f, 1f, 1f, 1f);
+            countText.raycastTarget = false;
+            countText.text = "0";
+
+            Shadow sh = go.AddComponent<Shadow>();
+            sh.effectColor = new Color(0f, 0f, 0f, 0.9f);
+            sh.effectDistance = new Vector2(1.5f, -1.5f);
+        }
+        else
+        {
+            countText = existing.GetComponent<Text>();
+            if (countText == null) countText = existing.gameObject.AddComponent<Text>();
+        }
+
+        if (slotCountTexts != null && index < slotCountTexts.Length)
+            slotCountTexts[index] = countText;
+    }
+
+    private static Font GetSlotFont()
+    {
+        Font f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        return f != null ? f : Resources.GetBuiltinResource<Font>("Arial.ttf");
     }
 
     private void EnsureSlotNumber(RectTransform slotRect, int index)

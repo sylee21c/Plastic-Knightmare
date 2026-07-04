@@ -91,6 +91,16 @@ public sealed class BuildingModeController : MonoBehaviour
     [SerializeField] private float brickYOffset = 0f;
     [SerializeField] private float stackOverlapY = 0.0473111f;
     [SerializeField] private bool requireDetectedFloorCell = false;
+    [Tooltip("씬의 BuildableCellMarker 오브젝트가 위치한 칸에만 배치 허용")]
+    [SerializeField] private bool restrictToBuildableMarkers = false;
+
+    [Header("Brick Health")]
+    [SerializeField] private float brickBaseHealth = 100f;
+    [SerializeField] private float brickStackBonus = 30f;
+    [SerializeField] private bool addHealthBarToBricks = true;
+    [SerializeField] private Vector3 brickHealthBarOffset = new Vector3(0f, 0.55f, 0f);
+    [SerializeField] private Vector2 brickHealthBarPixelSize = new Vector2(90f, 10f);
+    [SerializeField] private float brickHealthBarWorldScale = 0.008f;
     [SerializeField] private Color previewColor = new Color(1f, 1f, 1f, 0.36f);
     [SerializeField] private Color blockedPreviewColor = new Color(1f, 0.25f, 0.2f, 0.3f);
 
@@ -251,7 +261,9 @@ public sealed class BuildingModeController : MonoBehaviour
 
         if (hasPlacement)
         {
-            canBuildOnHighlightedCell = IsPlacementAllowed(placement);
+            bool placementAllowed = IsPlacementAllowed(placement);
+            bool inStock = HasInventoryFor(selectedBrick);
+            canBuildOnHighlightedCell = placementAllowed && inStock;
         }
 
         if (previewBrick == null)
@@ -362,6 +374,20 @@ public sealed class BuildingModeController : MonoBehaviour
 
     private bool IsPlacementAllowed(Placement placement)
     {
+        // 지정 셀 모드: 마커 셀에 포함된 것만 통과
+        if (restrictToBuildableMarkers)
+        {
+            HashSet<Vector2Int> allowed = GetBuildableMarkerCells();
+            if (allowed != null && allowed.Count > 0)
+            {
+                foreach (PlacementKey key in placement.Keys)
+                {
+                    if (!allowed.Contains(key.Cell)) return false;
+                }
+                return true;
+            }
+        }
+
         if (!requireDetectedFloorCell)
         {
             return true;
@@ -401,7 +427,63 @@ public sealed class BuildingModeController : MonoBehaviour
             || !TryGetPlacement(selectedBrick, out Placement placement))
             return;
 
+        // 인벤토리 소모 (없으면 배치 못 함)
+        if (!TryConsumeInventoryForBrick(selectedBrick)) return;
+
         SpawnBrick(selectedBrick, template, placement);
+    }
+
+    private bool TryConsumeInventoryForBrick(BrickDefinition brick)
+    {
+        if (brick == null) return false;
+        BrickInventory.EnsureExists();
+        if (!BrickInventory.Instance.TryConsume(brick.DisplayName, 1))
+        {
+            Debug.Log($"[BuildingMode] {brick.DisplayName} 브릭 재고 없음");
+            return false;
+        }
+        return true;
+    }
+
+    // 재고 유무 확인 (Editor 모드에서는 항상 있는 것으로 간주 → 프리뷰 정상 표시)
+    private bool HasInventoryFor(BrickDefinition brick)
+    {
+        if (brick == null) return false;
+        if (!Application.isPlaying) return true;
+        BrickInventory.EnsureExists();
+        return BrickInventory.Instance.GetCount(brick.DisplayName) > 0;
+    }
+
+    // 마커 셀 캐시 (매 프레임 재계산 — 마커가 씬에서 이동해도 반영)
+    private HashSet<Vector2Int> cachedBuildableCells;
+    private int cachedBuildableFrame = -1;
+
+    private HashSet<Vector2Int> GetBuildableMarkerCells()
+    {
+        if (gridOverlay == null || gridOverlay.CellSize <= 0f) return null;
+
+        // 프레임당 한 번만 재계산
+        if (cachedBuildableCells != null && cachedBuildableFrame == Time.frameCount)
+            return cachedBuildableCells;
+
+        if (cachedBuildableCells == null)
+            cachedBuildableCells = new HashSet<Vector2Int>();
+        else
+            cachedBuildableCells.Clear();
+
+#if UNITY_2023_1_OR_NEWER
+        BuildableCellMarker[] markers = Object.FindObjectsByType<BuildableCellMarker>(FindObjectsSortMode.None);
+#else
+        BuildableCellMarker[] markers = Object.FindObjectsOfType<BuildableCellMarker>();
+#endif
+        foreach (BuildableCellMarker m in markers)
+        {
+            if (m == null) continue;
+            cachedBuildableCells.Add(m.GetCell(gridOverlay));
+        }
+
+        cachedBuildableFrame = Time.frameCount;
+        return cachedBuildableCells;
     }
 
     private void UpdateDragSelect()
@@ -446,6 +528,9 @@ public sealed class BuildingModeController : MonoBehaviour
                 continue;
             if (!IsPlacementAllowed(placement))
                 continue;
+            // 인벤토리 없으면 이 위치는 건너뜀
+            if (!TryConsumeInventoryForBrick(selectedBrick))
+                break; // 재고 다 소진되면 나머지 셀도 건너뜀
             SpawnBrick(selectedBrick, template, placement);
         }
 
@@ -587,6 +672,27 @@ public sealed class BuildingModeController : MonoBehaviour
         marker.StackIndex = stackIndex;
         EnsureClickableCollider(brick);
         AddBrickToStacks(brick, placement.Keys);
+
+        // HP 부여: 스택 인덱스가 클수록 (위로 쌓을수록) 더 튼튼
+        float health = brickBaseHealth + brickStackBonus * stackIndex;
+        Damageable dmg = brick.GetComponent<Damageable>();
+        if (dmg == null) dmg = brick.AddComponent<Damageable>();
+        dmg.SetMaxHealth(health);
+        dmg.OnDeath += () => HandleBrickDestroyed(brick);
+
+        if (addHealthBarToBricks && brick.GetComponent<HealthBar>() == null)
+        {
+            HealthBar hb = brick.AddComponent<HealthBar>();
+            // 크기와 위치를 브릭에 맞게 커스터마이즈
+            hb.Configure(brickHealthBarOffset, brickHealthBarPixelSize, brickHealthBarWorldScale);
+        }
+    }
+
+    private void HandleBrickDestroyed(GameObject brick)
+    {
+        if (brick == null) return;
+        RemoveBrickFromStacks(brick);
+        Destroy(brick);
     }
 
     private void PlaceBrick(GameObject brick, BrickDefinition definition, Placement placement, int stackIndex)

@@ -34,6 +34,8 @@ public sealed class UpgradeShopItem : MonoBehaviour
     [SerializeField] private Button buyButton;
     [SerializeField] private TMP_Text buyButtonLabel;
 
+    private PurchaseButtonFlash buttonFlash;
+
     [Header("Labels")]
     [SerializeField] private string valueSuffix = "";
     [SerializeField] private string buyButtonFormat = "강화 ({0:N0})";
@@ -52,6 +54,7 @@ public sealed class UpgradeShopItem : MonoBehaviour
             buyButton.onClick.RemoveListener(Buy);
             buyButton.onClick.AddListener(Buy);
         }
+        EnsureButtonFlash();
         RefreshDisplay();
     }
 
@@ -60,11 +63,13 @@ public sealed class UpgradeShopItem : MonoBehaviour
         if (IsMaxed)
         {
             Debug.Log($"[UpgradeShopItem/{upgradeType}] 이미 최대 단계");
+            FlashPurchase(false);
             return;
         }
         if (CoinWallet.Instance == null)
         {
             Debug.LogWarning("[UpgradeShopItem] CoinWallet 없음");
+            FlashPurchase(false);
             return;
         }
 
@@ -72,13 +77,29 @@ public sealed class UpgradeShopItem : MonoBehaviour
         if (!CoinWallet.Instance.TrySpend(cost))
         {
             Debug.Log($"[UpgradeShopItem/{upgradeType}] 코인 부족: 필요 {cost}, 보유 {CoinWallet.Instance.Coins}");
+            FlashPurchase(false);
             return;
         }
 
         currentLevelIndex++;
         ApplyCurrentStatToPlayer();
         RefreshDisplay();
+        FlashPurchase(true);
         Debug.Log($"[Upgrade] {upgradeType} → {CurrentValue} (Lv {currentLevelIndex})");
+    }
+
+    private void EnsureButtonFlash()
+    {
+        if (buyButton == null || buttonFlash != null) return;
+        buttonFlash = buyButton.GetComponent<PurchaseButtonFlash>();
+        if (buttonFlash == null) buttonFlash = buyButton.gameObject.AddComponent<PurchaseButtonFlash>();
+    }
+
+    private void FlashPurchase(bool success)
+    {
+        EnsureButtonFlash();
+        if (buttonFlash != null) buttonFlash.Flash(buyButton, success);
+        SFXManager.PlayGlobal(success ? SFXManager.Sfx.Purchase : SFXManager.Sfx.PurchaseFail);
     }
 
     private void ApplyCurrentStatToPlayer()

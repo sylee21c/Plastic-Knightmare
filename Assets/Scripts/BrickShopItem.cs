@@ -23,6 +23,8 @@ public sealed class BrickShopItem : MonoBehaviour
     [SerializeField] private Button buyButton;
     [SerializeField] private TMP_Text buyButtonLabel;
 
+    private PurchaseButtonFlash buttonFlash;
+
     public int UnitPrice { get => unitPrice; set { unitPrice = Mathf.Max(0, value); RefreshDisplay(); } }
     public int Quantity => quantity;
     public int TotalPrice => unitPrice * quantity;
@@ -32,6 +34,7 @@ public sealed class BrickShopItem : MonoBehaviour
         if (decreaseButton != null) { decreaseButton.onClick.RemoveListener(Decrease); decreaseButton.onClick.AddListener(Decrease); }
         if (increaseButton != null) { increaseButton.onClick.RemoveListener(Increase); increaseButton.onClick.AddListener(Increase); }
         if (buyButton != null)     { buyButton.onClick.RemoveListener(Buy);         buyButton.onClick.AddListener(Buy); }
+        EnsureButtonFlash();
         RefreshDisplay();
     }
 
@@ -53,17 +56,34 @@ public sealed class BrickShopItem : MonoBehaviour
         if (CoinWallet.Instance == null)
         {
             Debug.LogWarning($"[BrickShopItem/{itemName}] CoinWallet.Instance 가 없음");
+            FlashPurchase(false);
             return;
         }
         if (!CoinWallet.Instance.TrySpend(total))
         {
             Debug.Log($"[BrickShopItem/{itemName}] 코인 부족: 필요 {total}, 보유 {CoinWallet.Instance.Coins}");
+            FlashPurchase(false);
             return;
         }
         // 인벤토리에 지급
         BrickInventory.EnsureExists();
         BrickInventory.Instance.Add(inventoryKey, quantity);
+        FlashPurchase(true);
         Debug.Log($"[BrickShopItem] {itemName} x{quantity} 구매 완료 ({total} coins) → 보유 {BrickInventory.Instance.GetCount(inventoryKey)}개");
+    }
+
+    private void EnsureButtonFlash()
+    {
+        if (buyButton == null || buttonFlash != null) return;
+        buttonFlash = buyButton.GetComponent<PurchaseButtonFlash>();
+        if (buttonFlash == null) buttonFlash = buyButton.gameObject.AddComponent<PurchaseButtonFlash>();
+    }
+
+    private void FlashPurchase(bool success)
+    {
+        EnsureButtonFlash();
+        if (buttonFlash != null) buttonFlash.Flash(buyButton, success);
+        SFXManager.PlayGlobal(success ? SFXManager.Sfx.Purchase : SFXManager.Sfx.PurchaseFail);
     }
 
     private void RefreshDisplay()

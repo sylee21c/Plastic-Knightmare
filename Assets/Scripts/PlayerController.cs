@@ -29,6 +29,8 @@ public sealed class PlayerController : MonoBehaviour
     [Tooltip("히트박스 구 반경")]
     [SerializeField] private float hitboxRadius = 0.7f;
     [SerializeField] private LayerMask hitboxLayers = ~0;
+    [Tooltip("공격 사운드 재생 시점 (초). 60fps 기준 프레임 11 = 0.183")]
+    [SerializeField] private float attackSoundDelay = 0.183f;
 
     [Header("Incapacitation (HP 소진 시)")]
     [SerializeField] private float incapacitationDuration = 5f;
@@ -56,8 +58,13 @@ public sealed class PlayerController : MonoBehaviour
     // 공격 스윙 상태 — 스윙 시작 후 경과 시간, 이번 스윙에서 이미 맞춘 유령 (중복 방지)
     private bool isSwinging;
     private float swingElapsed;
+    private bool attackSoundPlayedThisSwing;
     private readonly System.Collections.Generic.HashSet<GhostAI> hitThisSwing =
         new System.Collections.Generic.HashSet<GhostAI>();
+
+    // 걷기 루프 사운드 (로컬 AudioSource)
+    private AudioSource walkAudioSource;
+    private float lastHealthForSfx;
 
     private void Awake()
     {
@@ -91,11 +98,14 @@ public sealed class PlayerController : MonoBehaviour
         damageable = GetComponent<Damageable>();
         if (damageable == null) damageable = gameObject.AddComponent<Damageable>();
         damageable.OnDeath += HandleDeath;
+        damageable.OnHealthChanged += HandleHealthChanged;
+        lastHealthForSfx = damageable.CurrentHealth;
 
         if (GetComponent<HealthBar>() == null)
             gameObject.AddComponent<HealthBar>();
 
         CacheRenderers();
+        EnsureWalkAudioSource();
 
         if (animator == null) return;
 
@@ -112,6 +122,15 @@ public sealed class PlayerController : MonoBehaviour
 
     private void Update()
     {
+        // 게임오버: 모든 입력/움직임 정지, 걷기 사운드 정지, 애니메이터 속도 0
+        if (GameOverUIController.IsGameOver)
+        {
+            pendingMoveDirection = Vector3.zero;
+            if (animator != null) animator.SetFloat("Speed", 0f);
+            StopWalkAudio();
+            return;
+        }
+
         // 무력화 상태 진행 처리
         if (IsIncapacitated)
         {
@@ -135,6 +154,8 @@ public sealed class PlayerController : MonoBehaviour
 
         if (animator != null)
             animator.SetFloat("Speed", speed);
+
+        UpdateWalkAudio(speed, isGrounded);
 
         if (isGrounded && WasJumpPressed())
             DoJump();
@@ -160,6 +181,15 @@ public sealed class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        if (GameOverUIController.IsGameOver)
+        {
+            // 수평 속도만 정지. 중력(y) 은 유지 (공중이었으면 자연 낙하).
+            Vector3 v = rb.linearVelocity;
+            v.x = 0f; v.z = 0f;
+            rb.linearVelocity = v;
+            return;
+        }
+
         Vector3 vel = pendingMoveDirection * moveSpeed;
         vel.y = rb.linearVelocity.y;
         rb.linearVelocity = vel;
@@ -191,6 +221,7 @@ public sealed class PlayerController : MonoBehaviour
         // 데미지는 즉시 X, Update 안에서 hitWindowStart~hitWindowEnd 사이에만 판정
         isSwinging = true;
         swingElapsed = 0f;
+        attackSoundPlayedThisSwing = false;
         hitThisSwing.Clear();
     }
 
@@ -200,6 +231,13 @@ public sealed class PlayerController : MonoBehaviour
         if (!isSwinging) return;
 
         swingElapsed += Time.deltaTime;
+
+        // 공격 사운드: 11 프레임째 (기본 0.183s) 에 1회 재생
+        if (!attackSoundPlayedThisSwing && swingElapsed >= attackSoundDelay)
+        {
+            attackSoundPlayedThisSwing = true;
+            SFXManager.PlayGlobal(SFXManager.Sfx.PlayerAttack);
+        }
 
         // 윈도우 종료 → 스윙 마감
         if (swingElapsed > hitWindowEnd)
@@ -255,6 +293,7 @@ public sealed class PlayerController : MonoBehaviour
         vel.y = 0f;
         rb.linearVelocity = vel;
         rb.AddForce(Vector3.up * jumpForce, ForceMode.VelocityChange);
+        SFXManager.PlayGlobal(SFXManager.Sfx.PlayerJump);
     }
 
     private void CheckGrounded()
@@ -368,7 +407,21 @@ public sealed class PlayerController : MonoBehaviour
     private void HandleDeath()
     {
         if (IsIncapacitated) return;
+        SFXManager.PlayGlobal(SFXManager.Sfx.PlayerDeath);
+        StopWalkAudio();
         EnterIncapacitation();
+    }
+
+    private void HandleHealthChanged(float current, float max)
+    {
+        if (current < lastHealthForSfx - 0.01f)
+        {
+            // HP 가 실제로 감소한 경우 (힐/부활은 제외).
+            // 죽음 사운드는 HandleDeath 에서 별도 재생 → 여기서 중복 안 냄.
+            if (current > 0f)
+                SFXManager.PlayGlobal(IsBlocking ? SFXManager.Sfx.PlayerGuardHit : SFXManager.Sfx.PlayerHit);
+        }
+        lastHealthForSfx = current;
     }
 
     private void EnterIncapacitation()
@@ -401,6 +454,49 @@ public sealed class PlayerController : MonoBehaviour
     private void CacheRenderers()
     {
         cachedRenderers = GetComponentsInChildren<Renderer>();
+    }
+
+    // ── 걷기 루프 사운드 ──────────────────────────────────────────
+
+    private void EnsureWalkAudioSource()
+    {
+        SFXManager.EnsureExists();
+        if (walkAudioSource != null) return;
+
+        walkAudioSource = gameObject.AddComponent<AudioSource>();
+        walkAudioSource.playOnAwake = false;
+        walkAudioSource.loop = true;
+        walkAudioSource.spatialBlend = 0f; // 2D (플레이어 시점이라 3D 감쇠 불필요)
+    }
+
+    private void UpdateWalkAudio(float inputMagnitude, bool grounded)
+    {
+        if (walkAudioSource == null) return;
+
+        bool shouldWalk = inputMagnitude > 0.05f && grounded && !IsIncapacitated;
+
+        if (shouldWalk)
+        {
+            // 클립/볼륨이 SFXManager 에서 변경됐을 수 있으니 매번 확인
+            if (SFXManager.Instance != null
+                && SFXManager.Instance.TryGetClipData(SFXManager.Sfx.PlayerWalk,
+                    out AudioClip clip, out float volume, out _))
+            {
+                if (walkAudioSource.clip != clip) walkAudioSource.clip = clip;
+                walkAudioSource.volume = volume;
+                if (!walkAudioSource.isPlaying) walkAudioSource.Play();
+            }
+        }
+        else if (walkAudioSource.isPlaying)
+        {
+            walkAudioSource.Stop();
+        }
+    }
+
+    private void StopWalkAudio()
+    {
+        if (walkAudioSource != null && walkAudioSource.isPlaying)
+            walkAudioSource.Stop();
     }
 
 #if UNITY_EDITOR

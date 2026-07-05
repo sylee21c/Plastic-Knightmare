@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0da9f8dfe4edd5b4eb91432ce515c995, type: 3}
+  m_Name: Tank
+  m_EditorClassIdentifier: 
+  companionId: Tank
+  displayName: Tank
+  icon: {fileID: 21300000, guid: 9f206594a6e0924488715be01444d272, type: 3}
+  preferredSlot: 2
+  prefab: {fileID: 9160278748733586292, guid: ab147c57f1500814cbafd324733d5e88, type: 3}
+  placedYOffset: 0
+  spawnScale: 3.3
+  kind: 0
+  maxHealth: 100
+  aggroRange: 5.5
+  attackRange: 2.5
+  attackDamage: 20
+  attackCooldown: 3
+  fireMaxAngle: 5
+  targetLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  moveSpeed: 1
+  patrolMoveSpeed: 0.6
+  patrolRadius: 2
+  patrolPointReachDistance: 0.2
+  patrolWaitTime: 0.4
+  rotationSpeed: 8
+  projectilePrefab: {fileID: 2086261179823682334, guid: 1471e98bb0946d847a15230e4b8cb13c, type: 3}
+  projectileSpeed: 7
+  projectileScale: 1
+  muzzleLocalOffset: {x: 0, y: 0.5, z: 0.3}

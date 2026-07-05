@@ -188,4 +188,12 @@ public sealed class HealthBar : MonoBehaviour
                 HandleChanged(damageable.CurrentHealth, damageable.MaxHealth);
         }
     }
+
+    public void Configure(Vector3 offset, Vector2 pixel, float scale,
+                          bool hideDuringDay, bool hideWhenFull)
+    {
+        this.hideDuringDay = hideDuringDay;
+        this.hideWhenFull = hideWhenFull;
+        Configure(offset, pixel, scale);
+    }
 }

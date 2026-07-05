@@ -26,6 +26,7 @@ public sealed class CoinWallet : MonoBehaviour
     [SerializeField] private int startingCoins = 1000;
 
     public int Coins { get; private set; }
+    public int CoinsEarnedThisNight { get; private set; }
     public event System.Action<int> OnCoinsChanged;
 
     private void Awake()
@@ -44,11 +45,20 @@ public sealed class CoinWallet : MonoBehaviour
         if (instance == this) instance = null;
     }
 
-    public void Add(int amount)
+    public void Add(int amount) => Add(amount, false);
+
+    public void Add(int amount, bool countAsNightEarnings)
     {
         if (amount <= 0) return;
         Coins += amount;
+        if (countAsNightEarnings)
+            CoinsEarnedThisNight += amount;
         OnCoinsChanged?.Invoke(Coins);
+    }
+
+    public void ResetNightEarnings()
+    {
+        CoinsEarnedThisNight = 0;
     }
 
     public bool TrySpend(int amount)

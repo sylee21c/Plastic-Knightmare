@@ -20,6 +20,7 @@ public sealed class DayNightManager : MonoBehaviour
 
     [Header("Transition")]
     [SerializeField] private float transitionDuration = 3f;
+    public float TransitionDuration => transitionDuration;
 
     public Phase CurrentPhase { get; private set; } = Phase.Day;
     public int DayCount { get; private set; } = 1;
@@ -56,6 +57,7 @@ public sealed class DayNightManager : MonoBehaviour
         if (directionalLight == null)
             directionalLight = FindAnyObjectByType<Light>();
 
+        GameOverUIController.EnsureExists();
         ApplyPhaseInstant(Phase.Day);
     }
 
@@ -63,6 +65,7 @@ public sealed class DayNightManager : MonoBehaviour
     public void BeginNight()
     {
         if (CurrentPhase == Phase.Night) return;
+        CoinWallet.Instance?.ResetNightEarnings();
         if (activeTransition != null) StopCoroutine(activeTransition);
         activeTransition = StartCoroutine(TransitionRoutine(Phase.Night));
     }
@@ -74,6 +77,22 @@ public sealed class DayNightManager : MonoBehaviour
         DayCount++;
         if (activeTransition != null) StopCoroutine(activeTransition);
         activeTransition = StartCoroutine(TransitionRoutine(Phase.Day));
+    }
+
+    public void ReturnToCurrentDayAfterGameOver()
+    {
+        if (activeTransition != null)
+        {
+            StopCoroutine(activeTransition);
+            activeTransition = null;
+        }
+
+        CurrentPhase = Phase.Day;
+        ApplyPhaseInstant(Phase.Day);
+        OnDayBegin?.Invoke();
+        FindAnyObjectByType<GhostSpawner>()?.StopSpawning();
+        HealAllOnDayBegin();
+        CoinWallet.Instance?.ResetNightEarnings();
     }
 
     private IEnumerator TransitionRoutine(Phase targetPhase)
@@ -118,7 +137,26 @@ public sealed class DayNightManager : MonoBehaviour
         {
             OnDayBegin?.Invoke();
             FindAnyObjectByType<GhostSpawner>()?.StopSpawning();
+            HealAllOnDayBegin();
         }
+    }
+
+    // 낮이 되면 플레이어/침대/모든 브릭 HP 전부 최대치로 회복 (유령은 스킵)
+    private void HealAllOnDayBegin()
+    {
+#if UNITY_2023_1_OR_NEWER
+        Damageable[] all = Object.FindObjectsByType<Damageable>(FindObjectsSortMode.None);
+#else
+        Damageable[] all = Object.FindObjectsOfType<Damageable>();
+#endif
+        foreach (Damageable d in all)
+        {
+            if (d == null) continue;
+            if (d.GetComponent<GhostAI>() != null) continue; // 유령은 제외
+            if (d.GetComponent<CompanionToy>() != null) continue;
+            d.FullHeal();
+        }
+        Debug.Log($"[DayNightManager] 낮 시작 → 모든 HP 회복 ({all.Length}개 대상 중 유령 제외)");
     }
 
     private void SetBuildingEnabled(bool enabled)

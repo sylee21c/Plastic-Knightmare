@@ -15,13 +15,16 @@ public sealed class MonitorInteractionUI : MonoBehaviour
     [Header("Popup (씬에서 직접 편집)")]
     [SerializeField] private Canvas popupCanvas;
 
+    [Header("Prompt (씬에서 편집 가능. 비어있으면 코드로 자동 생성)")]
+    [SerializeField] private Canvas promptCanvas;
+    [SerializeField] private RectTransform promptRect;
+    [SerializeField] private Text promptText;
+
     [Header("Legacy Input")]
     [SerializeField] private KeyCode legacyInteractKey = KeyCode.F;
 
     private Transform player;
     private Camera sceneCamera;
-    private Canvas promptCanvas;
-    private RectTransform promptRect;
     private bool playerInRange;
     private bool popupOpen;
     private BuildingModeController buildingController;
@@ -53,19 +56,42 @@ public sealed class MonitorInteractionUI : MonoBehaviour
     private void Update()
     {
         FindReferences();
+
+        // 밤에는 상호작용 완전 차단
+        if (IsNight())
+        {
+            if (popupOpen) SetPopupVisible(false);
+            SetPromptVisible(false);
+            return;
+        }
+
         UpdatePromptPosition();
 
         if (playerInRange && WasInteractPressed())
-            SetPopupVisible(!popupOpen);
+        {
+            bool willOpen = !popupOpen;
+            SFXManager.PlayGlobal(willOpen ? SFXManager.Sfx.Interact : SFXManager.Sfx.Close);
+            SetPopupVisible(willOpen);
+        }
 
         if (popupOpen && WasCancelPressed())
+        {
+            SFXManager.PlayGlobal(SFXManager.Sfx.Close);
             SetPopupVisible(false);
+        }
+    }
+
+    private static bool IsNight()
+    {
+        return DayNightManager.Instance != null
+               && DayNightManager.Instance.CurrentPhase == DayNightManager.Phase.Night;
     }
 
     private void OnTriggerEnter(Collider other)
     {
         if (!IsPlayer(other)) return;
         playerInRange = true;
+        if (IsNight()) return; // 밤엔 UI 안 뜸
         SetPromptVisible(!popupOpen);
     }
 
@@ -83,6 +109,11 @@ public sealed class MonitorInteractionUI : MonoBehaviour
 
         if (popupCanvas != null)
             popupCanvas.gameObject.SetActive(visible);
+
+        // 팝업 열릴 때 우측 상단 CoinUI 숨김 (팝업 내부에 이미 코인 표시가 있으므로 중복 방지)
+        CoinUI coinUI = FindAnyObjectByType<CoinUI>(FindObjectsInactive.Include);
+        if (coinUI != null)
+            coinUI.gameObject.SetActive(!visible);
 
         // 빌딩 모드: 낮에만 팝업 상태에 따라 토글. 밤에는 DayNightManager가 관리
         bool isDay = DayNightManager.Instance == null
@@ -131,10 +162,36 @@ public sealed class MonitorInteractionUI : MonoBehaviour
 
     // ── [F] 프롬프트 (코드 생성, 편집 불필요) ────────────────────
 
+    // Inspector 우클릭(⋮) → 이 항목 선택하면 편집 모드에서 씬에 실제 오브젝트 생성됨.
+    // 이후 씬에서 위치·색·폰트 자유 편집 후 저장.
+    [ContextMenu("Create Prompt UI In Scene (편집 모드)")]
+    private void CreatePromptUIInScene()
+    {
+        if (promptCanvas != null)
+        {
+            Debug.Log("[MonitorInteractionUI] Prompt Canvas 가 이미 있음. Hierarchy 확인.");
+            return;
+        }
+        EnsurePrompt();
+        Debug.Log("[MonitorInteractionUI] Prompt UI 생성 완료. Hierarchy 에서 'Monitor Prompt Canvas' 확인. 편집 후 씬 저장하세요.");
+#if UNITY_EDITOR
+        if (promptCanvas != null)
+            UnityEditor.EditorUtility.SetDirty(this);
+#endif
+    }
+
     private void EnsurePrompt()
     {
-        if (promptCanvas != null) return;
+        // 씬에서 이미 참조 연결됐으면 그거 쓰고 폰트만 자동 할당
+        if (promptCanvas != null)
+        {
+            if (promptText != null && promptText.font == null)
+                promptText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                               ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
+            return;
+        }
 
+        // 폴백: 코드로 자동 생성
         GameObject canvasObj = new GameObject("Monitor Prompt Canvas");
         promptCanvas = canvasObj.AddComponent<Canvas>();
         promptCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -161,15 +218,15 @@ public sealed class MonitorInteractionUI : MonoBehaviour
         textRect.anchorMax = Vector2.one;
         textRect.offsetMin = textRect.offsetMax = Vector2.zero;
 
-        Text text = textObj.AddComponent<Text>();
-        text.text = "[F]  상호작용";
-        text.alignment = TextAnchor.MiddleCenter;
-        text.fontSize = 24;
-        text.fontStyle = FontStyle.Bold;
-        text.color = new Color(0.5f, 1f, 0.7f, 1f);
-        text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
-                  ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
-        text.raycastTarget = false;
+        promptText = textObj.AddComponent<Text>();
+        promptText.text = "[F]  상호작용";
+        promptText.alignment = TextAnchor.MiddleCenter;
+        promptText.fontSize = 24;
+        promptText.fontStyle = FontStyle.Bold;
+        promptText.color = new Color(0.5f, 1f, 0.7f, 1f);
+        promptText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                       ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
+        promptText.raycastTarget = false;
     }
 
     private void UpdatePromptPosition()
@@ -209,12 +266,16 @@ public sealed class MonitorInteractionUI : MonoBehaviour
     // Inspector의 Button onClick에서 직접 연결 가능한 public 메서드
     public void OnReadyButtonClicked()
     {
+        // 팝업 Canvas 가 꺼지기 전에 SFXManager 로 재생 → 소리 잘림 방지
+        SFXManager.PlayGlobal(SFXManager.Sfx.Ready);
         SetPopupVisible(false);
         DayNightManager.Instance?.BeginNight();
     }
 
     public void OnCloseButtonClicked()
     {
+        // 팝업 Canvas 가 꺼지기 전에 SFXManager (별도 오브젝트) 로 재생 → 소리 잘림 방지
+        SFXManager.PlayGlobal(SFXManager.Sfx.Close);
         SetPopupVisible(false);
     }
 

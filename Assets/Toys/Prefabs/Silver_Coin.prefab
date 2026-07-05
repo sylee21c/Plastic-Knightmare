@@ -104,7 +104,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CoinPickup
   value: 500
-  uniformScale: 9.5
+  targetDiameter: 0.2
+  fallbackUniformScale: 9.5
   floatHeight: 0.4
   rotateSpeedY: 180
   bobAmplitude: 0.05

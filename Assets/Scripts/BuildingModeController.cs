@@ -26,12 +26,15 @@ public sealed class BuildingModeController : MonoBehaviour
         [SerializeField] private GameObject prefab;
         [SerializeField, Min(1)] private int cellsLong = 1;
         [SerializeField] private bool halfCell;
+        [Tooltip("이 브릭 종류 1층의 HP. 0 이하면 BuildingModeController 의 Brick Base Health 폴백")]
+        [SerializeField] private float baseHealth = 0f;
 
         public string DisplayName => displayName;
         public GameObject Prefab => prefab;
         public int CellsLong => Mathf.Max(1, cellsLong);
         public bool HalfCell => halfCell;
         public bool CanRotate => halfCell || CellsLong > 1;
+        public float BaseHealth => baseHealth;
     }
 
     private readonly struct PlacementKey
@@ -101,6 +104,13 @@ public sealed class BuildingModeController : MonoBehaviour
     [SerializeField] private Vector3 brickHealthBarOffset = new Vector3(0f, 0.55f, 0f);
     [SerializeField] private Vector2 brickHealthBarPixelSize = new Vector2(90f, 10f);
     [SerializeField] private float brickHealthBarWorldScale = 0.008f;
+
+    [Header("Companion Health")]
+    [SerializeField] private bool addHealthBarToCompanions = true;
+    [SerializeField] private Vector3 companionHealthBarOffset = new Vector3(0f, 1.1f, 0f);
+    [SerializeField] private Vector2 companionHealthBarPixelSize = new Vector2(70f, 8f);
+    [SerializeField] private float companionHealthBarWorldScale = 0.007f;
+
     [SerializeField] private Color previewColor = new Color(1f, 1f, 1f, 0.36f);
     [SerializeField] private Color blockedPreviewColor = new Color(1f, 0.25f, 0.2f, 0.3f);
 
@@ -151,6 +161,7 @@ public sealed class BuildingModeController : MonoBehaviour
         HandleSelectionInput();
         RefreshPreviewBrick(false);
         UpdateHighlight();
+        UpdateCompanionPreview();
         HandleBuildInput();
         UpdateDragSelect();
         HandleDestroyInput();
@@ -225,6 +236,12 @@ public sealed class BuildingModeController : MonoBehaviour
                 ? BrickOrientation.Vertical
                 : BrickOrientation.Horizontal;
         }
+
+        // 동료 선택 상태에서 R 누르면 90도 회전
+        if (GetCompanionForCurrentSlot() != null && WasRotateKeyPressed())
+        {
+            companionYaw = (companionYaw + 90f) % 360f;
+        }
     }
 
     private void SelectBrick(int index)
@@ -283,6 +300,75 @@ public sealed class BuildingModeController : MonoBehaviour
         {
             previewMaterial.color = canBuildOnHighlightedCell ? previewColor : blockedPreviewColor;
         }
+    }
+
+    // 매 프레임 호출 → 동료 슬롯 선택 상태면 반투명 프리뷰 표시
+    private void UpdateCompanionPreview()
+    {
+        CompanionDefinition def = GetCompanionForCurrentSlot();
+
+        if (def == null || !hasHighlightedCell)
+        {
+            if (companionPreview != null) companionPreview.SetActive(false);
+            return;
+        }
+
+        // 브릭 프리뷰는 숨김 (충돌 방지)
+        if (previewBrick != null) previewBrick.SetActive(false);
+
+        // Def 이 바뀌면 프리뷰 재생성
+        if (companionPreview == null || companionPreviewDef != def)
+        {
+            if (companionPreview != null) Destroy(companionPreview);
+            companionPreview = Instantiate(def.prefab, transform);
+            companionPreview.name = $"{def.displayName}_Preview";
+            if (def.spawnScale > 0f)
+                companionPreview.transform.localScale = Vector3.one * def.spawnScale;
+
+            // 콜라이더/AI/Damageable 제거
+            foreach (Collider c in companionPreview.GetComponentsInChildren<Collider>()) Destroy(c);
+            foreach (CompanionToy t in companionPreview.GetComponentsInChildren<CompanionToy>()) Destroy(t);
+            foreach (Damageable d in companionPreview.GetComponentsInChildren<Damageable>()) Destroy(d);
+
+            // 반투명 머티리얼 적용
+            companionPreviewMaterial = new Material(FindPreviewShader())
+            {
+                name = "Companion Preview Material",
+                color = previewColor
+            };
+            ConfigurePreviewMaterial(companionPreviewMaterial);
+            foreach (Renderer r in companionPreview.GetComponentsInChildren<Renderer>())
+            {
+                r.sharedMaterial = companionPreviewMaterial;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+            }
+            companionPreviewDef = def;
+        }
+
+        // 배치 가능한 셀인지 확인 (buildable 마커 제한 반영)
+        bool canPlace = true;
+        if (restrictToBuildableMarkers)
+        {
+            var cells = GetBuildableMarkerCells();
+            if (cells == null || cells.Count == 0 || !cells.Contains(highlightedCell))
+                canPlace = false;
+        }
+        // 브릭/동료 이미 있는 셀 배제
+        if (canPlace && CellHasBrick(highlightedCell)) canPlace = false;
+        if (canPlace && CellHasCompanion(highlightedCell)) canPlace = false;
+        // 재고 확인
+        if (CompanionInventory.Instance == null || !CompanionInventory.Instance.HasAny(def.companionId))
+            canPlace = false;
+
+        companionPreview.SetActive(true);
+        Vector3 pos = gridOverlay.CellToWorldCenter(highlightedCell);
+        pos.y = gridOverlay.SurfaceY + def.placedYOffset;
+        companionPreview.transform.position = pos;
+        companionPreview.transform.rotation = Quaternion.Euler(0f, companionYaw, 0f);
+
+        if (companionPreviewMaterial != null)
+            companionPreviewMaterial.color = canPlace ? previewColor : blockedPreviewColor;
     }
 
     private bool TryGetTargetCell(out Vector2Int targetCell, out Vector3 floorPoint)
@@ -374,6 +460,12 @@ public sealed class BuildingModeController : MonoBehaviour
 
     private bool IsPlacementAllowed(Placement placement)
     {
+        // 동료가 이미 있는 셀은 브릭 배치 불가
+        foreach (PlacementKey key in placement.Keys)
+        {
+            if (CellHasCompanion(key.Cell)) return false;
+        }
+
         // 지정 셀 모드: 마커 셀에 포함된 것만 통과
         if (restrictToBuildableMarkers)
         {
@@ -411,6 +503,9 @@ public sealed class BuildingModeController : MonoBehaviour
 
         queuedLeftClickBuild = false;
 
+        // 동료 슬롯 선택 상태이면 동료 배치 처리
+        if (TryPlaceCompanionAtHighlight()) return;
+
         // Shift + 클릭 → 직사각형 드래그 선택 시작 (배치는 마우스 놓을 때)
         if (IsShiftHeld() && hasHighlightedCell)
         {
@@ -420,17 +515,153 @@ public sealed class BuildingModeController : MonoBehaviour
             return;
         }
 
-        // 일반 클릭 → 단일 배치
+        // 일반 클릭 → 단일 브릭 배치
         BrickDefinition selectedBrick = GetSelectedBrick();
         GameObject template = ResolveBrickTemplate(selectedBrick);
         if (!canBuildOnHighlightedCell || selectedBrick == null || template == null
             || !TryGetPlacement(selectedBrick, out Placement placement))
             return;
 
-        // 인벤토리 소모 (없으면 배치 못 함)
         if (!TryConsumeInventoryForBrick(selectedBrick)) return;
 
         SpawnBrick(selectedBrick, template, placement);
+    }
+
+    // ── 동료 배치 ────────────────────────────────────────────────
+
+    [Header("Companions")]
+    [Tooltip("사용 가능한 동료 종류들 (ScriptableObject). 슬롯 3~5 에서 선택됨")]
+    [SerializeField] private CompanionDefinition[] companionCatalog;
+
+    // 동료 프리뷰 (배치 전 반투명 가이드)
+    private GameObject companionPreview;
+    private Material companionPreviewMaterial;
+    private CompanionDefinition companionPreviewDef;
+    private float companionYaw = 0f;
+
+    // 필드에 배치된 동료 트래킹 (cell → GameObject)
+    private readonly Dictionary<Vector2Int, GameObject> placedCompanions = new Dictionary<Vector2Int, GameObject>();
+
+    public CompanionDefinition GetCompanionDefinitionById(string id)
+    {
+        if (companionCatalog == null || string.IsNullOrEmpty(id)) return null;
+        foreach (CompanionDefinition d in companionCatalog)
+            if (d != null && d.companionId == id) return d;
+        return null;
+    }
+
+    private bool CellHasCompanion(Vector2Int cell)
+    {
+        if (!placedCompanions.TryGetValue(cell, out GameObject go)) return false;
+        if (go == null) { placedCompanions.Remove(cell); return false; }
+        return true;
+    }
+
+    private bool CellHasBrick(Vector2Int cell)
+    {
+        foreach (KeyValuePair<PlacementKey, List<GameObject>> kv in placedBricks)
+        {
+            if (kv.Key.Cell != cell) continue;
+            if (kv.Value != null && kv.Value.Count > 0) return true;
+        }
+        return false;
+    }
+
+    private CompanionDefinition GetCompanionForCurrentSlot()
+    {
+        CompanionInventory.EnsureExists();
+        var inv = CompanionInventory.Instance;
+        if (inv == null) return null;
+
+        // 현재 선택된 hotbar 슬롯이 동료 슬롯 범위 안에 있는지
+        if (selectedBrickIndex < inv.FirstSlotIndex || selectedBrickIndex > inv.LastSlotIndex)
+            return null;
+
+        string id = inv.GetIdInSlot(selectedBrickIndex);
+        if (string.IsNullOrEmpty(id)) return null;
+
+        if (companionCatalog != null)
+        {
+            foreach (CompanionDefinition d in companionCatalog)
+                if (d != null && d.companionId == id) return d;
+        }
+        return null;
+    }
+
+    private bool TryPlaceCompanionAtHighlight()
+    {
+        CompanionDefinition def = GetCompanionForCurrentSlot();
+        if (def == null) return false;
+
+        if (!hasHighlightedCell)
+        {
+            // 슬롯은 동료지만 아직 배치 못 함 (셀 조준 안 됨)
+            return true; // 클릭 소비만
+        }
+
+        // 지정 셀 모드 활성 시 마커 셀만 허용
+        if (restrictToBuildableMarkers)
+        {
+            var cells = GetBuildableMarkerCells();
+            if (cells == null || cells.Count == 0 || !cells.Contains(highlightedCell))
+            {
+                Debug.Log("[Companion] 배치 불가 셀");
+                return true;
+            }
+        }
+
+        // 브릭/동료 이미 있으면 배치 불가
+        if (CellHasBrick(highlightedCell))
+        {
+            Debug.Log("[Companion] 해당 칸에 이미 브릭 있음");
+            return true;
+        }
+        if (CellHasCompanion(highlightedCell))
+        {
+            Debug.Log("[Companion] 해당 칸에 이미 동료 있음");
+            return true;
+        }
+
+        // 재고 확인 및 소모
+        if (!CompanionInventory.Instance.TryConsume(def.companionId, 1))
+        {
+            Debug.Log($"[Companion] {def.companionId} 재고 없음");
+            return true;
+        }
+
+        // 스폰 (R로 회전한 각도 적용)
+        Vector3 spawnPos = gridOverlay.CellToWorldCenter(highlightedCell);
+        spawnPos.y = gridOverlay.SurfaceY + def.placedYOffset;
+        GameObject go = Instantiate(def.prefab, spawnPos, Quaternion.Euler(0f, companionYaw, 0f));
+        if (def.spawnScale > 0f) go.transform.localScale = Vector3.one * def.spawnScale;
+
+        // Damageable 자동 부착
+        Damageable dmg = go.GetComponent<Damageable>();
+        if (dmg == null) dmg = go.AddComponent<Damageable>();
+        dmg.SetMaxHealth(def.maxHealth);
+
+        // AI 컴포넌트 자동 부착 (프리팹에 미리 없어도 됨)
+        CompanionToy toy = go.GetComponent<CompanionToy>();
+        if (toy == null)
+        {
+            toy = def.kind == CompanionKind.Mobile
+                ? (CompanionToy)go.AddComponent<MobileCompanionAI>()
+                : (CompanionToy)go.AddComponent<StationaryCompanionAI>();
+        }
+        toy.Configure(def);
+
+        if (addHealthBarToCompanions && go.GetComponent<HealthBar>() == null)
+        {
+            HealthBar hb = go.AddComponent<HealthBar>();
+            hb.Configure(companionHealthBarOffset, companionHealthBarPixelSize,
+                companionHealthBarWorldScale, hideDuringDay: true, hideWhenFull: true);
+        }
+
+        // 셀 점유 등록
+        placedCompanions[highlightedCell] = go;
+
+        Debug.Log($"[Companion] {def.displayName} 배치 완료 (셀 {highlightedCell})");
+        return true;
     }
 
     private bool TryConsumeInventoryForBrick(BrickDefinition brick)
@@ -670,11 +901,13 @@ public sealed class BuildingModeController : MonoBehaviour
 
         marker.Cell = placement.AnchorCell;
         marker.StackIndex = stackIndex;
+        marker.InventoryKey = selectedBrick.DisplayName;
         EnsureClickableCollider(brick);
         AddBrickToStacks(brick, placement.Keys);
 
-        // HP 부여: 스택 인덱스가 클수록 (위로 쌓을수록) 더 튼튼
-        float health = brickBaseHealth + brickStackBonus * stackIndex;
+        // HP 부여: 브릭별 baseHealth 우선 사용, 없으면 전역 fallback. 스택 인덱스가 클수록 튼튼.
+        float baseHP = selectedBrick.BaseHealth > 0f ? selectedBrick.BaseHealth : brickBaseHealth;
+        float health = baseHP + brickStackBonus * stackIndex;
         Damageable dmg = brick.GetComponent<Damageable>();
         if (dmg == null) dmg = brick.AddComponent<Damageable>();
         dmg.SetMaxHealth(health);
@@ -686,6 +919,9 @@ public sealed class BuildingModeController : MonoBehaviour
             // 크기와 위치를 브릭에 맞게 커스터마이즈
             hb.Configure(brickHealthBarOffset, brickHealthBarPixelSize, brickHealthBarWorldScale);
         }
+
+        // 배치 사운드 (파괴/피격 사운드는 BuildingPlacedBrick 이 Damageable 이벤트로 자체 처리)
+        marker.HandlePlaced();
     }
 
     private void HandleBrickDestroyed(GameObject brick)
@@ -886,6 +1122,26 @@ public sealed class BuildingModeController : MonoBehaviour
 
         queuedRightClickDestroy = false;
 
+        // 동료가 있는 셀이면 우선 회수 (재고 반환)
+        if (CellHasCompanion(highlightedCell))
+        {
+            GameObject companion = placedCompanions[highlightedCell];
+            if (companion != null)
+            {
+                CompanionToy toy = companion.GetComponent<CompanionToy>();
+                if (toy != null && toy.Definition != null)
+                {
+                    CompanionInventory.EnsureExists();
+                    CompanionInventory.Instance.TryAdd(toy.Definition.companionId, 1, toy.Definition.preferredSlot);
+                    Debug.Log($"[Companion] {toy.Definition.displayName} 회수됨 (재고 +1)");
+                }
+                Destroy(companion);
+            }
+            placedCompanions.Remove(highlightedCell);
+            return;
+        }
+
+        // 그 외엔 브릭 제거
         BrickDefinition selectedBrick = GetSelectedBrick();
         if (selectedBrick == null || !TryGetPlacement(selectedBrick, out Placement placement))
         {
@@ -895,7 +1151,14 @@ public sealed class BuildingModeController : MonoBehaviour
         GameObject brick = FindTopBrick(placement.Keys);
         if (brick != null)
         {
+            BuildingPlacedBrick marker = brick.GetComponent<BuildingPlacedBrick>();
+            string inventoryKey = marker != null ? marker.InventoryKey : selectedBrick.DisplayName;
             RemoveBrickFromStacks(brick);
+            if (!string.IsNullOrEmpty(inventoryKey))
+            {
+                BrickInventory.EnsureExists();
+                BrickInventory.Instance.Add(inventoryKey, 1);
+            }
             Destroy(brick);
         }
     }
@@ -1280,4 +1543,23 @@ public sealed class BuildingModeController : MonoBehaviour
         return false;
 #endif
     }
+
+#if UNITY_EDITOR
+    // 동료 프리뷰 활성 중이면 Aggro/Attack Range 를 Scene 뷰에 표시
+    private void OnDrawGizmos()
+    {
+        if (companionPreview == null || !companionPreview.activeSelf) return;
+        if (companionPreviewDef == null) return;
+
+        Vector3 c = companionPreview.transform.position;
+
+        // Aggro Range (파랑)
+        Gizmos.color = new Color(0.35f, 0.75f, 1f, 0.85f);
+        Gizmos.DrawWireSphere(c, companionPreviewDef.aggroRange);
+
+        // Attack Range (주황)
+        Gizmos.color = new Color(1f, 0.5f, 0.15f, 0.95f);
+        Gizmos.DrawWireSphere(c, companionPreviewDef.attackRange);
+    }
+#endif
 }

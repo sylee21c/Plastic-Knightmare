@@ -9,7 +9,7 @@ using UnityEngine;
 [RequireComponent(typeof(Damageable))]
 public sealed class GhostAI : MonoBehaviour
 {
-    public enum TargetType { Bed, Player, Brick }
+    public enum TargetType { Bed, Player, Companion, Brick }
 
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 2.5f;
@@ -52,16 +52,22 @@ public sealed class GhostAI : MonoBehaviour
     private Damageable damageable;
     private Transform player;
     private Transform bed;
+    private CompanionToy companionTarget;
     private Animator animator;
     private Rigidbody rb;
+    private Collider[] ownColliders;
+    private Collider[] playerColliders;
 
     private float attackTimer;
     private float baseY;
     private float hoverPhase;
     private bool isDead;
+    private bool ignoringPlayerCollision;
 
     // 오뚝이 공격 애니메이션
     private float tiltTimer;
+
+    private float lastHealthForSfx;
 
     // 경로 차단 브릭
     private BuildingPlacedBrick blockingBrick;
@@ -78,6 +84,7 @@ public sealed class GhostAI : MonoBehaviour
         rb.useGravity = false;
         rb.constraints = RigidbodyConstraints.FreezeRotation;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
+        ownColliders = GetComponentsInChildren<Collider>();
     }
 
     private void Start()
@@ -105,16 +112,31 @@ public sealed class GhostAI : MonoBehaviour
         GameObject playerObj = GameObject.FindWithTag("Player");
         if (playerObj == null) playerObj = GameObject.Find("Player");
         if (playerObj != null) player = playerObj.transform;
+        if (player != null) playerColliders = player.GetComponentsInChildren<Collider>();
 
         GameObject bedObj = GameObject.FindWithTag("Bed");
         if (bedObj != null) bed = bedObj.transform;
 
         damageable.OnDeath += HandleDeath;
+        damageable.OnHealthChanged += HandleHealthChanged;
+        lastHealthForSfx = damageable.CurrentHealth;
     }
 
     private void OnDestroy()
     {
-        if (damageable != null) damageable.OnDeath -= HandleDeath;
+        SetPlayerCollisionIgnored(false);
+        if (damageable != null)
+        {
+            damageable.OnDeath -= HandleDeath;
+            damageable.OnHealthChanged -= HandleHealthChanged;
+        }
+    }
+
+    private void HandleHealthChanged(float current, float max)
+    {
+        if (current < lastHealthForSfx - 0.01f && current > 0f)
+            SFXManager.PlayGlobal(SFXManager.Sfx.GhostHit);
+        lastHealthForSfx = current;
     }
 
     // 자기 콜라이더를 스킵하고 아래로만 raycast (천장/자기몸통 오탐 방지)
@@ -139,7 +161,15 @@ public sealed class GhostAI : MonoBehaviour
     {
         if (isDead) return;
 
+        // 게임오버: 이동/공격/hover 전부 정지. 애니메이터도 stop.
+        if (GameOverUIController.IsGameOver)
+        {
+            if (animator != null) SetBoolSafe(animator, "IsMoving", false);
+            return;
+        }
+
         attackTimer -= Time.deltaTime;
+        UpdatePlayerCollisionPassThrough();
         UpdateTilt();
         UpdateTarget();
         CheckBrickInPath();
@@ -152,9 +182,33 @@ public sealed class GhostAI : MonoBehaviour
 
     private void UpdateTarget()
     {
+        CompanionToy nearestCompanion = FindNearestAliveCompanionInRange(aggroRange);
+
+        if (CurrentTarget == TargetType.Companion)
+        {
+            if (!IsValidCompanionTarget(companionTarget)
+                || Vector3.Distance(transform.position, companionTarget.transform.position) > deaggroRange)
+            {
+                companionTarget = null;
+                CurrentTarget = TargetType.Bed;
+            }
+            else
+            {
+                return;
+            }
+        }
+
         if (player == null)
         {
-            CurrentTarget = TargetType.Bed;
+            if (nearestCompanion != null)
+            {
+                companionTarget = nearestCompanion;
+                CurrentTarget = TargetType.Companion;
+            }
+            else
+            {
+                CurrentTarget = TargetType.Bed;
+            }
             return;
         }
 
@@ -162,22 +216,104 @@ public sealed class GhostAI : MonoBehaviour
         PlayerController pc = player.GetComponent<PlayerController>();
         if (pc != null && pc.IsIncapacitated)
         {
-            CurrentTarget = TargetType.Bed;
+            if (nearestCompanion != null)
+            {
+                companionTarget = nearestCompanion;
+                CurrentTarget = TargetType.Companion;
+            }
+            else
+            {
+                CurrentTarget = TargetType.Bed;
+            }
             return;
         }
 
         float distToPlayer = Vector3.Distance(transform.position, player.position);
 
-        if (CurrentTarget == TargetType.Bed && distToPlayer < aggroRange)
-            CurrentTarget = TargetType.Player;
+        if (CurrentTarget == TargetType.Bed)
+        {
+            if (distToPlayer < aggroRange
+                && (nearestCompanion == null || distToPlayer <= Vector3.Distance(transform.position, nearestCompanion.transform.position)))
+            {
+                companionTarget = null;
+                CurrentTarget = TargetType.Player;
+            }
+            else if (nearestCompanion != null)
+            {
+                companionTarget = nearestCompanion;
+                CurrentTarget = TargetType.Companion;
+            }
+        }
         else if (CurrentTarget == TargetType.Player && distToPlayer > deaggroRange)
+        {
+            CurrentTarget = TargetType.Player;
+            if (nearestCompanion != null)
+            {
+                companionTarget = nearestCompanion;
+                CurrentTarget = TargetType.Companion;
+            }
+            else
+            {
+                CurrentTarget = TargetType.Bed;
+            }
+        }
+        else if (CurrentTarget == TargetType.Player)
+        {
+            companionTarget = null;
+        }
+    }
+
+    private CompanionToy FindNearestAliveCompanionInRange(float range)
+    {
+#if UNITY_2023_1_OR_NEWER
+        CompanionToy[] all = Object.FindObjectsByType<CompanionToy>(FindObjectsSortMode.None);
+#else
+        CompanionToy[] all = Object.FindObjectsOfType<CompanionToy>();
+#endif
+        CompanionToy nearest = null;
+        float bestDist = float.MaxValue;
+        foreach (CompanionToy companion in all)
+        {
+            if (!IsValidCompanionTarget(companion)) continue;
+
+            float dist = Vector3.Distance(transform.position, companion.transform.position);
+            if (dist <= range && dist < bestDist)
+            {
+                bestDist = dist;
+                nearest = companion;
+            }
+        }
+
+        return nearest;
+    }
+
+    private static bool IsValidCompanionTarget(CompanionToy companion)
+    {
+        if (companion == null) return false;
+
+        Damageable health = companion.GetComponent<Damageable>();
+        return health != null && !health.IsDead;
+    }
+
+    private Transform GetMainTargetTransform()
+    {
+        if (CurrentTarget == TargetType.Player) return player;
+        if (CurrentTarget == TargetType.Companion && IsValidCompanionTarget(companionTarget))
+            return companionTarget.transform;
+
+        if (CurrentTarget == TargetType.Companion)
+        {
+            companionTarget = null;
             CurrentTarget = TargetType.Bed;
+        }
+
+        return bed;
     }
 
     // 진행 방향에 브릭이 있으면 그 브릭을 임시 타겟으로
     private void CheckBrickInPath()
     {
-        Transform mainTarget = CurrentTarget == TargetType.Player ? player : bed;
+        Transform mainTarget = GetMainTargetTransform();
         if (mainTarget == null) { blockingBrick = null; blockingBrickHealth = null; return; }
 
         Vector3 toTarget = mainTarget.position - transform.position;
@@ -248,13 +384,16 @@ public sealed class GhostAI : MonoBehaviour
         bool isMoving = !inAttackRange;
         if (animator != null) SetBoolSafe(animator, "IsMoving", isMoving);
 
-        if (!isMoving) return;
+        if (!isMoving)
+        {
+            RotateTowardDirection(toTarget);
+            return;
+        }
 
         Vector3 direction = toTarget / distance;
         transform.position += direction * moveSpeed * Time.deltaTime;
 
-        Quaternion faceRot = Quaternion.LookRotation(direction, Vector3.up);
-        transform.rotation = Quaternion.Slerp(transform.rotation, faceRot, rotationSpeed * Time.deltaTime);
+        RotateTowardDirection(direction);
     }
 
     // ── 공격 ──────────────────────────────────────────────────────
@@ -270,6 +409,7 @@ public sealed class GhostAI : MonoBehaviour
         flatDelta.y = 0f;
         float dist = flatDelta.magnitude;
         if (dist > attackRange) return;
+        RotateTowardDirection(flatDelta);
 
         // 데미지 계산
         float damage = attackDamage;
@@ -295,6 +435,7 @@ public sealed class GhostAI : MonoBehaviour
 
         attackTimer = attackCooldown;
         tiltTimer = tiltDuration;
+        SFXManager.PlayGlobal(SFXManager.Sfx.GhostAttack);
         targetHealth.TakeDamage(damage);
     }
 
@@ -309,7 +450,51 @@ public sealed class GhostAI : MonoBehaviour
 
         // 현재 y축 방향(진행 방향)은 유지하고 X축(앞으로 숙임)만 오프셋
         Vector3 e = transform.eulerAngles;
-        transform.eulerAngles = new Vector3(angle, e.y, 0f);
+        transform.eulerAngles = new Vector3(angle, GetFacingTargetYaw(), 0f);
+    }
+
+    private float GetFacingTargetYaw()
+    {
+        Transform target = GetActiveTargetTransform();
+        if (target == null) return transform.eulerAngles.y;
+
+        Vector3 toTarget = target.position - transform.position;
+        toTarget.y = 0f;
+        if (toTarget.sqrMagnitude < 0.001f) return transform.eulerAngles.y;
+
+        return Quaternion.LookRotation(toTarget.normalized, Vector3.up).eulerAngles.y;
+    }
+
+    private void RotateTowardDirection(Vector3 direction)
+    {
+        direction.y = 0f;
+        if (direction.sqrMagnitude < 0.001f) return;
+
+        Quaternion faceRot = Quaternion.LookRotation(direction.normalized, Vector3.up);
+        transform.rotation = Quaternion.Slerp(transform.rotation, faceRot, rotationSpeed * Time.deltaTime);
+    }
+
+    private void UpdatePlayerCollisionPassThrough()
+    {
+        PlayerController pc = player != null ? player.GetComponent<PlayerController>() : null;
+        SetPlayerCollisionIgnored(pc != null && pc.IsIncapacitated);
+    }
+
+    private void SetPlayerCollisionIgnored(bool ignored)
+    {
+        if (ignoringPlayerCollision == ignored) return;
+        ignoringPlayerCollision = ignored;
+
+        if (ownColliders == null || playerColliders == null) return;
+        foreach (Collider own in ownColliders)
+        {
+            if (own == null) continue;
+            foreach (Collider playerCollider in playerColliders)
+            {
+                if (playerCollider == null) continue;
+                Physics.IgnoreCollision(own, playerCollider, ignored);
+            }
+        }
     }
 
     private void ApplyHover()
@@ -324,7 +509,7 @@ public sealed class GhostAI : MonoBehaviour
     private Transform GetActiveTargetTransform()
     {
         if (blockingBrick != null) return blockingBrick.transform;
-        return CurrentTarget == TargetType.Player ? player : bed;
+        return GetMainTargetTransform();
     }
 
     private static void SetBoolSafe(Animator a, string name, bool v)
@@ -354,6 +539,7 @@ public sealed class GhostAI : MonoBehaviour
     {
         if (isDead) return;
         isDead = true;
+        SFXManager.PlayGlobal(SFXManager.Sfx.GhostDeath);
         if (animator != null) SetBoolSafe(animator, "IsMoving", false);
         OnDeath?.Invoke();
 

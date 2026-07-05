@@ -45,6 +45,7 @@ public class WovenKidExample : MonoBehaviour {
 
 	// Update is called once per frame
 	void Update () {
+#if ENABLE_LEGACY_INPUT_MANAGER
 		     if    (Input.GetKeyDown(KeyCode.W)) {
 			if(anim.GetCurrentAnimatorStateInfo(0).IsName("Idle")) {  
 				anim.SetBool (Walk, true); 
@@ -547,9 +548,10 @@ public class WovenKidExample : MonoBehaviour {
 				anim.SetBool (KoalaClimbReachTop, false);
 				anim.SetBool (KoalaJumpToClimb, false);
 				anim.SetBool (Collect, false);
-				anim.SetBool (FallSitted, false); ; 
+				anim.SetBool (FallSitted, false); ;
 			}
-				
-	     } 
+
+	     }
+#endif
 	}
 }

@@ -93,6 +93,7 @@ public sealed class BuildingHotbarUI : MonoBehaviour
 
         instance.EnsureSlotBoxes();
         instance.RefreshSelectedSlot();
+        instance.RefreshAllCounts(); // 슬롯 재구성 후 dim 알파 재적용
     }
 
     private void Awake()
@@ -122,11 +123,28 @@ public sealed class BuildingHotbarUI : MonoBehaviour
             return;
         }
 
+#if UNITY_EDITOR
+        // OnValidate 안에서 RectTransform 을 건드리면 SendMessage 예외가 뜬다.
+        // 에디터가 안전한 시점에 실행되도록 지연 호출로 옮김.
+        UnityEditor.EditorApplication.delayCall += DeferredValidate;
+#endif
+    }
+
+#if UNITY_EDITOR
+    private void DeferredValidate()
+    {
+        UnityEditor.EditorApplication.delayCall -= DeferredValidate;
+        if (this == null || !isActiveAndEnabled)
+        {
+            return;
+        }
+
         EnsureCanvasRect();
         BuildSlotsIfEmpty();
         EnsureSlotBoxes();
         RefreshSelectedSlot();
     }
+#endif
 
     private void OnDisable()
     {
@@ -137,15 +155,33 @@ public sealed class BuildingHotbarUI : MonoBehaviour
         }
     }
 
+    private CompanionInventory subscribedCompanionInventory;
+
     private void SubscribeInventory()
     {
         if (!Application.isPlaying) return;
+
+        // Brick 인벤토리 구독
         BrickInventory.EnsureExists();
-        if (subscribedInventory == BrickInventory.Instance) return;
-        UnsubscribeInventory();
-        subscribedInventory = BrickInventory.Instance;
-        if (subscribedInventory != null)
-            subscribedInventory.OnCountChanged += HandleInventoryChanged;
+        if (subscribedInventory != BrickInventory.Instance)
+        {
+            if (subscribedInventory != null)
+                subscribedInventory.OnCountChanged -= HandleInventoryChanged;
+            subscribedInventory = BrickInventory.Instance;
+            if (subscribedInventory != null)
+                subscribedInventory.OnCountChanged += HandleInventoryChanged;
+        }
+
+        // Companion 인벤토리 구독
+        CompanionInventory.EnsureExists();
+        if (subscribedCompanionInventory != CompanionInventory.Instance)
+        {
+            if (subscribedCompanionInventory != null)
+                subscribedCompanionInventory.OnInventoryChanged -= RefreshCompanionSlots;
+            subscribedCompanionInventory = CompanionInventory.Instance;
+            if (subscribedCompanionInventory != null)
+                subscribedCompanionInventory.OnInventoryChanged += RefreshCompanionSlots;
+        }
     }
 
     private void UnsubscribeInventory()
@@ -154,6 +190,11 @@ public sealed class BuildingHotbarUI : MonoBehaviour
         {
             subscribedInventory.OnCountChanged -= HandleInventoryChanged;
             subscribedInventory = null;
+        }
+        if (subscribedCompanionInventory != null)
+        {
+            subscribedCompanionInventory.OnInventoryChanged -= RefreshCompanionSlots;
+            subscribedCompanionInventory = null;
         }
     }
 
@@ -165,6 +206,17 @@ public sealed class BuildingHotbarUI : MonoBehaviour
             if (SlotNames[i] == key && slotCountTexts[i] != null)
             {
                 slotCountTexts[i].text = newCount.ToString();
+                if (slotBoxes != null && i < slotBoxes.Length && slotBoxes[i] != null)
+                {
+                    Image iconImg = FindIconImage(slotBoxes[i]);
+                    if (iconImg != null)
+                    {
+                        Color c = iconImg.color;
+                        // sprite 없으면 완전 투명 (Unity 기본 흰색 스프라이트가 새어나오는 것 방지)
+                        c.a = iconImg.sprite == null ? 0f : (newCount > 0 ? 1f : 0.4f);
+                        iconImg.color = c;
+                    }
+                }
                 return;
             }
         }
@@ -180,7 +232,67 @@ public sealed class BuildingHotbarUI : MonoBehaviour
             if (Application.isPlaying && BrickInventory.Instance != null)
                 count = BrickInventory.Instance.GetCount(SlotNames[i]);
             slotCountTexts[i].text = count.ToString();
+            if (slotBoxes != null && i < slotBoxes.Length && slotBoxes[i] != null)
+            {
+                Image iconImg = FindIconImage(slotBoxes[i]);
+                if (iconImg != null)
+                {
+                    Color c = iconImg.color;
+                    c.a = iconImg.sprite == null ? 0f : (count > 0 ? 1f : 0.4f);
+                    iconImg.color = c;
+                }
+            }
         }
+        RefreshCompanionSlots();
+    }
+
+    // Companion 슬롯 (3~5): 카운트 갱신. 아이콘은 slotIcons[] 로 정적 지정 유지.
+    // 재고 0 이면 dim (반투명), 있으면 opaque.
+    private void RefreshCompanionSlots()
+    {
+        if (!Application.isPlaying) return;
+        CompanionInventory inv = CompanionInventory.Instance;
+        if (inv == null) return;
+
+        BuildingModeController bmc = FindAnyObjectByType<BuildingModeController>();
+
+        for (int i = inv.FirstSlotIndex; i <= inv.LastSlotIndex && i < SlotCount; i++)
+        {
+            string id = inv.GetIdInSlot(i);
+            int count = string.IsNullOrEmpty(id) ? 0 : inv.GetCount(id);
+
+            // 카운트 텍스트
+            if (slotCountTexts != null && i < slotCountTexts.Length && slotCountTexts[i] != null)
+                slotCountTexts[i].text = count > 0 ? count.ToString() : "0";
+
+            // 아이콘은 slotIcons[] 로 정적 지정된 것 유지, 재고 0이면 반투명
+            if (slotBoxes != null && i < slotBoxes.Length && slotBoxes[i] != null)
+            {
+                Image iconImg = FindIconImage(slotBoxes[i]);
+                if (iconImg != null)
+                {
+                    // sprite 없으면 완전 투명. 있으면 재고에 따라 opaque/dim.
+                    float alpha = iconImg.sprite == null ? 0f : (count > 0 ? 1f : 0.4f);
+                    Color c = iconImg.color;
+                    c.a = alpha;
+                    iconImg.color = c;
+                }
+            }
+        }
+    }
+
+    private static Image FindIconImage(RectTransform slot)
+    {
+        // 슬롯 자식들 중 이름이 "Icon" 으로 시작하는 Image 찾기
+        foreach (Transform child in slot)
+        {
+            if (child.name.StartsWith("Icon") || child.name == "Icon")
+            {
+                Image img = child.GetComponent<Image>();
+                if (img != null) return img;
+            }
+        }
+        return null;
     }
 
     [ContextMenu("Rebuild Generated Hotbar")]
@@ -569,7 +681,19 @@ public sealed class BuildingHotbarUI : MonoBehaviour
         iconImage.sprite = GetSlotIcon(index);
         iconImage.preserveAspect = true;
         iconImage.raycastTarget = false;
-        iconImage.color = iconImage.sprite == null ? new Color(1f, 1f, 1f, 0f) : Color.white;
+        // 스프라이트 없으면 완전 투명. 있으면 기존 알파 값 보존 (dim 상태 유지)
+        if (iconImage.sprite == null)
+        {
+            iconImage.color = new Color(1f, 1f, 1f, 0f);
+        }
+        else
+        {
+            Color c = iconImage.color;
+            // 처음 생성 시 (알파가 0인 경우) 흰색으로. 이미 있던 경우 알파 유지.
+            if (c.a <= 0.001f) c = Color.white;
+            else c.r = c.g = c.b = 1f;
+            iconImage.color = c;
+        }
         iconImage.transform.SetSiblingIndex(Mathf.Max(0, slotRect.childCount - 2));
     }
 

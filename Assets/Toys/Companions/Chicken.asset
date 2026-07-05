@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0da9f8dfe4edd5b4eb91432ce515c995, type: 3}
+  m_Name: Chicken
+  m_EditorClassIdentifier: 
+  companionId: Chicken
+  displayName: Squeaky Chicken
+  icon: {fileID: 21300000, guid: b85558e7ec6645b4a96a9101fd943c4e, type: 3}
+  preferredSlot: 4
+  prefab: {fileID: 3472564747407352984, guid: 5ef051cf34c6a2a41ab0d1362ba6d4de, type: 3}
+  placedYOffset: 0
+  spawnScale: 1.8
+  kind: 2
+  maxHealth: 75
+  aggroRange: 0
+  attackRange: 0
+  attackDamage: 0
+  attackCooldown: 0
+  fireMaxAngle: 15
+  targetLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  moveSpeed: 0
+  patrolMoveSpeed: 0
+  patrolRadius: 0
+  patrolPointReachDistance: 0.2
+  patrolWaitTime: 0.4
+  rotationSpeed: 0
+  projectilePrefab: {fileID: 0}
+  projectileSpeed: 8
+  projectileScale: 0.07
+  muzzleLocalOffset: {x: 0, y: 0.5, z: 0.3}
+  projectileVisualRotationOffset: {x: 100, y: 0, z: 0}
+  projectileTrailColor: {r: 1, g: 0.86, b: 0.24, a: 0.9}
+  trapTriggerOnlyAtNight: 1
+  trapTriggerOnlyWhenGhostEntersPlacedCell: 1
+  trapFallbackTriggerRadius: 0.55
+  trapTriggerCooldown: 0.4
+  trapSelfDamageOnTrigger: 25
+  trapEffectRadius: 4
+  trapStunDuration: 5
+  trapKnockbackDistance: 5
+  trapKnockbackDuration: 0.22
+  trapKnockbackAgainstGhostMovement: 1
+  trapSquashDuration: 0.18
+  trapSquashReturnDuration: 0.16
+  trapTriggeredScaleMultiplier: {x: 1.25, y: 0.35, z: 1.25}

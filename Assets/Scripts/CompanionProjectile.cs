@@ -12,6 +12,7 @@ public sealed class CompanionProjectile : MonoBehaviour
     [SerializeField] private float trailStartWidth = 0.035f;
     [SerializeField] private float trailEndWidth = 0.005f;
     [SerializeField] private Vector3 visualRotationOffset = new Vector3(100f, 0f, 0f);
+    [SerializeField] private Color trailColor = new Color(1f, 0.86f, 0.24f, 0.9f);
 
     private Transform target;
     private float damage;
@@ -37,6 +38,20 @@ public sealed class CompanionProjectile : MonoBehaviour
             if (direction.sqrMagnitude > 0.0001f)
                 SetVisualRotation(direction.normalized);
         }
+    }
+
+    public void Init(Transform target, float damage, float speed,
+        Vector3 visualRotationOffset, Color trailColor)
+    {
+        ConfigureVisuals(visualRotationOffset, trailColor);
+        Init(target, damage, speed);
+    }
+
+    public void ConfigureVisuals(Vector3 visualRotationOffset, Color trailColor)
+    {
+        this.visualRotationOffset = visualRotationOffset;
+        this.trailColor = trailColor;
+        ApplyTrailColor();
     }
 
     private void Update()
@@ -96,9 +111,25 @@ public sealed class CompanionProjectile : MonoBehaviour
         if (shader != null)
         {
             Material material = new Material(shader);
-            material.color = new Color(1f, 0.86f, 0.24f, 0.9f);
+            material.color = trailColor;
             trail.material = material;
         }
+    }
+
+    private void ApplyTrailColor()
+    {
+        TrailRenderer trail = GetComponent<TrailRenderer>();
+        if (trail == null) return;
+
+        if (trail.material == null)
+        {
+            Shader shader = Shader.Find("Sprites/Default");
+            if (shader != null)
+                trail.material = new Material(shader);
+        }
+
+        if (trail.material != null)
+            trail.material.color = trailColor;
     }
 
     private bool TryHitGhostBetween(Vector3 start, Vector3 direction, float distance)

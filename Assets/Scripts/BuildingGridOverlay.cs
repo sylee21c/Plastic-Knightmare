@@ -175,6 +175,9 @@ public sealed class BuildingGridOverlay : MonoBehaviour
             scene = SceneManager.GetActiveScene();
         }
 
+        // 씬이 아직 로딩 중이면 스킵 (ExecuteAlways 로 OnEnable 이 씬 로드 전 호출되는 케이스 대응)
+        if (!scene.isLoaded) return floorBounds;
+
         foreach (GameObject root in scene.GetRootGameObjects())
         {
             CollectFloorBounds(root.transform, floorBounds);

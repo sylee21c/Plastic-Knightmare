@@ -207,7 +207,8 @@ public sealed class MobileCompanionAI : CompanionToy
 
         CompanionProjectile projectile = go.GetComponent<CompanionProjectile>();
         if (projectile == null) projectile = go.AddComponent<CompanionProjectile>();
-        projectile.Init(target.transform, definition.attackDamage, definition.projectileSpeed);
+        projectile.Init(target.transform, definition.attackDamage, definition.projectileSpeed,
+            definition.projectileVisualRotationOffset, definition.projectileTrailColor);
     }
 
     private bool IsFacingTarget(Vector3 targetDirection)

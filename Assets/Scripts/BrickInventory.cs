@@ -6,14 +6,8 @@ using UnityEngine;
 public sealed class BrickInventory : MonoBehaviour
 {
     private static BrickInventory instance;
-    public static BrickInventory Instance
-    {
-        get
-        {
-            if (instance == null) EnsureExists();
-            return instance;
-        }
-    }
+    // 프로퍼티에서 자동 생성 X. 필요한 곳에서 EnsureExists() 명시 호출.
+    public static BrickInventory Instance => instance;
 
     public static void EnsureExists()
     {

@@ -33,6 +33,8 @@ public sealed class SFXManager : MonoBehaviour
         TankMove,        // 루프
         TankFire,
         TankDeath,
+        ChickenTrap,
+        ChickenDeath,
         // Brick
         BrickPlace,
         BrickHit,
@@ -50,6 +52,33 @@ public sealed class SFXManager : MonoBehaviour
         [SerializeField, Range(0f, 1f)] public float volume = 1f;
         [Tooltip("피치 랜덤 범위 (min, max). 같은 값이면 고정")]
         [SerializeField] public Vector2 pitchRange = new Vector2(1f, 1f);
+    }
+
+    // 여러 클립 중 랜덤 재생용 슬롯. 배열에 클립을 여러 개 넣으면 매 재생마다 랜덤 선택.
+    [System.Serializable]
+    public sealed class MultiClipSlot
+    {
+        [Tooltip("재생할 클립들. 여러 개 넣으면 랜덤 선택.")]
+        [SerializeField] public AudioClip[] clips = new AudioClip[0];
+        [SerializeField, Range(0f, 1f)] public float volume = 1f;
+        [Tooltip("피치 랜덤 범위 (min, max). 같은 값이면 고정")]
+        [SerializeField] public Vector2 pitchRange = new Vector2(1f, 1f);
+
+        public AudioClip PickRandom()
+        {
+            if (clips == null || clips.Length == 0) return null;
+            int validCount = 0;
+            for (int i = 0; i < clips.Length; i++) if (clips[i] != null) validCount++;
+            if (validCount == 0) return null;
+            int pick = Random.Range(0, validCount);
+            for (int i = 0; i < clips.Length; i++)
+            {
+                if (clips[i] == null) continue;
+                if (pick == 0) return clips[i];
+                pick--;
+            }
+            return null;
+        }
     }
 
     public static SFXManager Instance { get; private set; }
@@ -85,6 +114,9 @@ public sealed class SFXManager : MonoBehaviour
     [SerializeField] private ClipSlot tankMove = new ClipSlot();
     [SerializeField] private ClipSlot tankFire = new ClipSlot();
     [SerializeField] private ClipSlot tankDeath = new ClipSlot();
+    [Tooltip("여러 클립 넣으면 랜덤 재생.")]
+    [SerializeField] private MultiClipSlot chickenTrap = new MultiClipSlot();
+    [SerializeField] private ClipSlot chickenDeath = new ClipSlot();
 
     [Header("Brick")]
     [SerializeField] private ClipSlot brickPlace = new ClipSlot();
@@ -132,8 +164,22 @@ public sealed class SFXManager : MonoBehaviour
 
     public void Play(Sfx sfx)
     {
+        if (audioSource == null) return;
+
+        // MultiClipSlot 특수 처리 — 여러 클립 중 랜덤 재생
+        if (sfx == Sfx.ChickenTrap)
+        {
+            AudioClip picked = chickenTrap.PickRandom();
+            if (picked == null) return;
+            float origPitch = audioSource.pitch;
+            audioSource.pitch = GetRandomPitch(chickenTrap.pitchRange);
+            audioSource.PlayOneShot(picked, chickenTrap.volume);
+            audioSource.pitch = origPitch;
+            return;
+        }
+
         ClipSlot slot = GetSlot(sfx);
-        if (slot == null || slot.clip == null || audioSource == null) return;
+        if (slot == null || slot.clip == null) return;
 
         float originalPitch = audioSource.pitch;
         audioSource.pitch = GetRandomPitch(slot.pitchRange);
@@ -179,6 +225,8 @@ public sealed class SFXManager : MonoBehaviour
             case Sfx.TankMove:       return tankMove;
             case Sfx.TankFire:       return tankFire;
             case Sfx.TankDeath:      return tankDeath;
+            // ChickenTrap 은 Play() 에서 MultiClipSlot 으로 직접 처리 (여기 안 옴)
+            case Sfx.ChickenDeath:   return chickenDeath;
             case Sfx.BrickPlace:     return brickPlace;
             case Sfx.BrickHit:       return brickHit;
             case Sfx.BrickBreak:     return brickBreak;

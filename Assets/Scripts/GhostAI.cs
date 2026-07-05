@@ -47,6 +47,7 @@ public sealed class GhostAI : MonoBehaviour
     [SerializeField] private float bonusCoinChance = 0.2f;
 
     public TargetType CurrentTarget { get; private set; } = TargetType.Bed;
+    public Vector3 LastMoveDirection => lastMoveDirection;
     public event System.Action OnDeath;
 
     private Damageable damageable;
@@ -63,6 +64,11 @@ public sealed class GhostAI : MonoBehaviour
     private float hoverPhase;
     private bool isDead;
     private bool ignoringPlayerCollision;
+    private float stunTimer;
+    private float knockbackTimer;
+    private float knockbackDuration;
+    private Vector3 knockbackVelocity;
+    private Vector3 lastMoveDirection = Vector3.forward;
 
     // 오뚝이 공격 애니메이션
     private float tiltTimer;
@@ -169,6 +175,14 @@ public sealed class GhostAI : MonoBehaviour
         }
 
         attackTimer -= Time.deltaTime;
+
+        if (stunTimer > 0f || knockbackTimer > 0f)
+        {
+            UpdateCrowdControl();
+            ApplyHover();
+            return;
+        }
+
         UpdatePlayerCollisionPassThrough();
         UpdateTilt();
         UpdateTarget();
@@ -290,6 +304,8 @@ public sealed class GhostAI : MonoBehaviour
     private static bool IsValidCompanionTarget(CompanionToy companion)
     {
         if (companion == null) return false;
+        // 트랩(꼬꼬닭 등)은 유령이 인식하지 않음 → 지나가다 밟히면 발동만.
+        if (!companion.IsTargetableByGhost) return false;
 
         Damageable health = companion.GetComponent<Damageable>();
         return health != null && !health.IsDead;
@@ -391,6 +407,7 @@ public sealed class GhostAI : MonoBehaviour
         }
 
         Vector3 direction = toTarget / distance;
+        lastMoveDirection = direction;
         transform.position += direction * moveSpeed * Time.deltaTime;
 
         RotateTowardDirection(direction);
@@ -520,6 +537,54 @@ public sealed class GhostAI : MonoBehaviour
 
     // 외부 데미지 인입(플레이어 공격 등)
     public void TakeDamage(float amount) => damageable.TakeDamage(amount);
+
+    public void ApplyStunAndKnockback(Vector3 sourcePosition, float stunDuration,
+        float knockbackDistance, float knockbackDuration)
+    {
+        Vector3 direction = transform.position - sourcePosition;
+        direction.y = 0f;
+        ApplyStunAndKnockbackDirection(direction, stunDuration, knockbackDistance, knockbackDuration);
+    }
+
+    public void ApplyStunAndKnockbackDirection(Vector3 knockbackDirection, float stunDuration,
+        float knockbackDistance, float knockbackDuration)
+    {
+        if (isDead) return;
+
+        stunTimer = Mathf.Max(stunTimer, Mathf.Max(0f, stunDuration));
+        this.knockbackDuration = Mathf.Max(0.01f, knockbackDuration);
+        knockbackTimer = this.knockbackDuration;
+
+        knockbackDirection.y = 0f;
+        if (knockbackDirection.sqrMagnitude < 0.001f)
+            knockbackDirection = -lastMoveDirection;
+        if (knockbackDirection.sqrMagnitude < 0.001f)
+            knockbackDirection = -transform.forward;
+
+        knockbackVelocity = knockbackDirection.normalized
+            * Mathf.Max(0f, knockbackDistance) / this.knockbackDuration;
+
+        attackTimer = Mathf.Max(attackTimer, stunTimer);
+        if (animator != null) SetBoolSafe(animator, "IsMoving", false);
+    }
+
+    private void UpdateCrowdControl()
+    {
+        stunTimer = Mathf.Max(0f, stunTimer - Time.deltaTime);
+
+        if (knockbackTimer > 0f)
+        {
+            knockbackTimer = Mathf.Max(0f, knockbackTimer - Time.deltaTime);
+            float normalizedTime = knockbackDuration <= 0f ? 0f : knockbackTimer / knockbackDuration;
+            float falloff = Mathf.Clamp01(normalizedTime);
+            transform.position += knockbackVelocity * falloff * Time.deltaTime;
+        }
+
+        Vector3 flatVelocity = knockbackVelocity;
+        flatVelocity.y = 0f;
+        if (flatVelocity.sqrMagnitude > 0.001f)
+            RotateTowardDirection(-flatVelocity);
+    }
 
     // GhostSpawner에서 스폰 시 스탯 일괄 세팅
     public void ConfigureStats(float moveSpeed, float attackRange, float attackDamage,

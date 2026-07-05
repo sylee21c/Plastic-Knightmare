@@ -1,15 +1,13 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// 동료 장난감 인벤토리. 슬롯 3~5 (0-based 2~4) 에 동적으로 할당.
-// 필드 배치 시 소지량 감소. 0 되면 해당 슬롯 자동 해제.
+// Companion toy inventory. Hotbar slots 3-5 map to 0-based indices 2-4.
+// Placing a toy consumes one item; when count reaches 0, its hotbar slot is cleared.
 public sealed class CompanionInventory : MonoBehaviour
 {
     private static CompanionInventory instance;
-    public static CompanionInventory Instance
-    {
-        get { if (instance == null) EnsureExists(); return instance; }
-    }
+    // 프로퍼티에서 자동 생성 X. 필요한 곳에서 EnsureExists() 명시 호출.
+    public static CompanionInventory Instance => instance;
 
     public static void EnsureExists()
     {
@@ -21,14 +19,14 @@ public sealed class CompanionInventory : MonoBehaviour
     }
 
     [Header("Slot Range (0-based hotbar index)")]
-    [Tooltip("첫 동료 슬롯 (기본 2 = 핫바 3번칸)")]
+    [Tooltip("First companion slot. Default 2 = hotbar key 3.")]
     [SerializeField] private int firstSlotIndex = 2;
-    [Tooltip("마지막 동료 슬롯 (기본 4 = 핫바 5번칸)")]
+    [Tooltip("Last companion slot. Default 4 = hotbar key 5.")]
     [SerializeField] private int lastSlotIndex = 4;
 
-    // slotIndex → companionId
+    // slotIndex -> companionId
     private readonly Dictionary<int, string> slotToId = new Dictionary<int, string>();
-    // companionId → 소지 수
+    // companionId -> count
     private readonly Dictionary<string, int> counts = new Dictionary<string, int>();
 
     public event System.Action OnInventoryChanged;
@@ -66,7 +64,6 @@ public sealed class CompanionInventory : MonoBehaviour
         return -1;
     }
 
-    // 첫번째 빈 슬롯 반환 (없으면 -1)
     public int FindFirstEmptySlot()
     {
         for (int i = firstSlotIndex; i <= lastSlotIndex; i++)
@@ -74,15 +71,13 @@ public sealed class CompanionInventory : MonoBehaviour
         return -1;
     }
 
-    // 동료를 인벤토리에 추가. 이미 있으면 카운트 증가, 없으면 빈 슬롯 할당.
-    // preferredSlot >= 0 이고 비어있으면 우선 그 슬롯 사용.
     public bool TryAdd(string id, int amount = 1, int preferredSlot = -1)
     {
         if (string.IsNullOrEmpty(id) || amount <= 0) return false;
 
         if (GetSlotOfId(id) == -1)
         {
-            int targetSlot = -1;
+            int targetSlot;
             if (preferredSlot >= firstSlotIndex && preferredSlot <= lastSlotIndex
                 && !slotToId.ContainsKey(preferredSlot))
                 targetSlot = preferredSlot;
@@ -91,7 +86,7 @@ public sealed class CompanionInventory : MonoBehaviour
 
             if (targetSlot == -1)
             {
-                Debug.LogWarning("[CompanionInventory] 슬롯 가득 참");
+                Debug.LogWarning("[CompanionInventory] No empty companion hotbar slot.");
                 return false;
             }
             slotToId[targetSlot] = id;
@@ -102,7 +97,6 @@ public sealed class CompanionInventory : MonoBehaviour
         return true;
     }
 
-    // 필드 배치 시 호출. 소지량 감소. 0 되면 슬롯 해제.
     public bool TryConsume(string id, int amount = 1)
     {
         if (string.IsNullOrEmpty(id) || amount <= 0) return false;

@@ -58,6 +58,7 @@ public sealed class CompanionShopItem : MonoBehaviour
         }
 
         int total = TotalPrice;
+        CoinWallet.EnsureExists();
         if (CoinWallet.Instance == null)
         {
             FlashPurchase(false);

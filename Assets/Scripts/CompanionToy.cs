@@ -24,6 +24,12 @@ public abstract class CompanionToy : MonoBehaviour
 
     public CompanionDefinition Definition => definition;
 
+    // 서브클래스가 오버라이드해서 자기 사망 SFX 지정 가능. 기본은 TankDeath.
+    protected virtual SFXManager.Sfx DeathSfx => SFXManager.Sfx.TankDeath;
+
+    // 유령이 이 컴패니언을 적으로 인식하고 쫓아올지 여부. 트랩류는 false 로 오버라이드.
+    public virtual bool IsTargetableByGhost => true;
+
     protected virtual void Awake()
     {
         damageable = GetComponent<Damageable>();
@@ -144,7 +150,7 @@ public abstract class CompanionToy : MonoBehaviour
     {
         if (deathStarted) return;
         deathStarted = true;
-        SFXManager.PlayGlobal(SFXManager.Sfx.TankDeath);
+        SFXManager.PlayGlobal(DeathSfx);
         StopAllCoroutines();
         StartCoroutine(DeathRoutine());
     }

@@ -53,6 +53,7 @@ public sealed class BrickShopItem : MonoBehaviour
     public void Buy()
     {
         int total = TotalPrice;
+        CoinWallet.EnsureExists();
         if (CoinWallet.Instance == null)
         {
             Debug.LogWarning($"[BrickShopItem/{itemName}] CoinWallet.Instance 가 없음");

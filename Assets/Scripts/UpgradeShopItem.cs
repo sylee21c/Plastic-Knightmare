@@ -66,6 +66,7 @@ public sealed class UpgradeShopItem : MonoBehaviour
             FlashPurchase(false);
             return;
         }
+        CoinWallet.EnsureExists();
         if (CoinWallet.Instance == null)
         {
             Debug.LogWarning("[UpgradeShopItem] CoinWallet 없음");

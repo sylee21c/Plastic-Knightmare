@@ -1,6 +1,6 @@
 using UnityEngine;
 
-public enum CompanionKind { Mobile, Stationary }
+public enum CompanionKind { Mobile, Stationary, Trap }
 
 // 동료 장난감 한 종류를 정의. ScriptableObject 로 만들어 자산화.
 // Project 창 우클릭 → Create → Toys → Companion Definition
@@ -59,4 +59,23 @@ public sealed class CompanionDefinition : ScriptableObject
     public float projectileScale = 0.07f;
     [Tooltip("발사체 스폰 위치 오프셋 (로컬)")]
     public Vector3 muzzleLocalOffset = new Vector3(0f, 0.5f, 0.3f);
+    [Tooltip("Visual rotation offset applied after aiming the projectile at its target.")]
+    public Vector3 projectileVisualRotationOffset = new Vector3(100f, 0f, 0f);
+    [Tooltip("Trail color used when the projectile creates its default trail.")]
+    public Color projectileTrailColor = new Color(1f, 0.86f, 0.24f, 0.9f);
+
+    [Header("Trap Only")]
+    public bool trapTriggerOnlyAtNight = true;
+    public bool trapTriggerOnlyWhenGhostEntersPlacedCell = true;
+    public float trapFallbackTriggerRadius = 0.55f;
+    public float trapTriggerCooldown = 0.4f;
+    public float trapSelfDamageOnTrigger = 25f;
+    public float trapEffectRadius = 3f;
+    public float trapStunDuration = 1.6f;
+    public float trapKnockbackDistance = 1.2f;
+    public float trapKnockbackDuration = 0.22f;
+    public bool trapKnockbackAgainstGhostMovement = true;
+    public float trapSquashDuration = 0.18f;
+    public float trapSquashReturnDuration = 0.16f;
+    public Vector3 trapTriggeredScaleMultiplier = new Vector3(1.25f, 0.35f, 1.25f);
 }

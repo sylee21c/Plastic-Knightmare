@@ -320,7 +320,25 @@ public sealed class BuildingModeController : MonoBehaviour
         if (companionPreview == null || companionPreviewDef != def)
         {
             if (companionPreview != null) Destroy(companionPreview);
-            companionPreview = Instantiate(def.prefab, transform);
+
+            if (def.prefab == null)
+            {
+                LogPrefabIssueOnce(def, "prefab 필드가 비어있음");
+                companionPreviewDef = def;
+                return;
+            }
+
+            try
+            {
+                companionPreview = Instantiate(def.prefab, transform);
+            }
+            catch (System.InvalidCastException)
+            {
+                LogPrefabIssueOnce(def, "InvalidCastException — prefab 참조가 손상됨. Chicken.asset 등의 CompanionDefinition Inspector 에서 prefab 필드를 비웠다가 해당 프리팹을 다시 드래그해서 재할당하세요.");
+                companionPreviewDef = def;
+                return;
+            }
+
             companionPreview.name = $"{def.displayName}_Preview";
             if (def.spawnScale > 0f)
                 companionPreview.transform.localScale = Vector3.one * def.spawnScale;
@@ -588,6 +606,73 @@ public sealed class BuildingModeController : MonoBehaviour
         return null;
     }
 
+    private readonly System.Collections.Generic.HashSet<CompanionDefinition> loggedPrefabIssues =
+        new System.Collections.Generic.HashSet<CompanionDefinition>();
+
+    private void LogPrefabIssueOnce(CompanionDefinition def, string reason)
+    {
+        if (def == null || loggedPrefabIssues.Contains(def)) return;
+        loggedPrefabIssues.Add(def);
+        Debug.LogError($"[Companion] {def.displayName} ({def.companionId}) 프리뷰 생성 실패: {reason}");
+    }
+
+    // 현재 선택된 슬롯이 왜 프리뷰가 안 뜨는지 진단.
+    // Inspector 에서 BuildingModeController 우클릭 → "Diagnose Selected Companion Slot" 실행.
+    [ContextMenu("Diagnose Selected Companion Slot")]
+    private void DiagnoseSelectedCompanionSlot()
+    {
+        CompanionInventory.EnsureExists();
+        var inv = CompanionInventory.Instance;
+        string report = $"[Diagnose] selectedBrickIndex={selectedBrickIndex}, ";
+
+        if (inv == null) { Debug.LogWarning(report + "CompanionInventory.Instance == null"); return; }
+        report += $"companion slot range=[{inv.FirstSlotIndex}..{inv.LastSlotIndex}], ";
+
+        if (selectedBrickIndex < inv.FirstSlotIndex || selectedBrickIndex > inv.LastSlotIndex)
+        {
+            Debug.LogWarning(report + "→ 선택된 슬롯이 동료 슬롯 범위 밖. 번호키 3~5 로 다시 선택해보세요.");
+            return;
+        }
+
+        string id = inv.GetIdInSlot(selectedBrickIndex);
+        report += $"inv.GetIdInSlot={id ?? "<null>"}, count={(string.IsNullOrEmpty(id) ? 0 : inv.GetCount(id))}, ";
+
+        if (string.IsNullOrEmpty(id))
+        {
+            Debug.LogWarning(report + "→ 이 슬롯에 아직 동료가 없음. 상점에서 구매하거나 인스펙터의 preferredSlot 을 확인.");
+            return;
+        }
+
+        int catalogCount = companionCatalog?.Length ?? 0;
+        report += $"catalogSize={catalogCount}, catalog ids=[";
+        if (companionCatalog != null)
+        {
+            for (int i = 0; i < companionCatalog.Length; i++)
+                report += (i > 0 ? ", " : "") + (companionCatalog[i] != null ? companionCatalog[i].companionId : "<null>");
+        }
+        report += "], ";
+
+        CompanionDefinition match = null;
+        if (companionCatalog != null)
+            foreach (CompanionDefinition d in companionCatalog)
+                if (d != null && d.companionId == id) { match = d; break; }
+
+        if (match == null)
+        {
+            Debug.LogWarning(report + $"→ companionCatalog 에 id=\"{id}\" 인 CompanionDefinition 이 없음. BuildingModeController 인스펙터의 Companion Catalog 배열에 추가.");
+            return;
+        }
+
+        report += $"matched def={match.displayName}, prefab={(match.prefab != null ? match.prefab.name : "<null>")}, kind={match.kind}, spawnScale={match.spawnScale}";
+        if (match.prefab == null)
+        {
+            Debug.LogWarning(report + " → CompanionDefinition 의 prefab 필드가 비어있음.");
+            return;
+        }
+
+        Debug.Log(report + " → 정상. 프리뷰가 안 뜬다면 hasHighlightedCell 이 false (마우스가 유효 셀 위에 없음) 이거나 gridOverlay 문제.");
+    }
+
     private bool TryPlaceCompanionAtHighlight()
     {
         CompanionDefinition def = GetCompanionForCurrentSlot();
@@ -632,7 +717,18 @@ public sealed class BuildingModeController : MonoBehaviour
         // 스폰 (R로 회전한 각도 적용)
         Vector3 spawnPos = gridOverlay.CellToWorldCenter(highlightedCell);
         spawnPos.y = gridOverlay.SurfaceY + def.placedYOffset;
-        GameObject go = Instantiate(def.prefab, spawnPos, Quaternion.Euler(0f, companionYaw, 0f));
+        GameObject go;
+        try
+        {
+            go = Instantiate(def.prefab, spawnPos, Quaternion.Euler(0f, companionYaw, 0f));
+        }
+        catch (System.InvalidCastException)
+        {
+            LogPrefabIssueOnce(def, "InvalidCastException — prefab 참조가 손상됨. CompanionDefinition Inspector 에서 prefab 재할당 필요.");
+            // 재고를 환불
+            CompanionInventory.Instance.TryAdd(def.companionId, 1, def.preferredSlot);
+            return true;
+        }
         if (def.spawnScale > 0f) go.transform.localScale = Vector3.one * def.spawnScale;
 
         // Damageable 자동 부착
@@ -644,9 +740,18 @@ public sealed class BuildingModeController : MonoBehaviour
         CompanionToy toy = go.GetComponent<CompanionToy>();
         if (toy == null)
         {
-            toy = def.kind == CompanionKind.Mobile
-                ? (CompanionToy)go.AddComponent<MobileCompanionAI>()
-                : (CompanionToy)go.AddComponent<StationaryCompanionAI>();
+            switch (def.kind)
+            {
+                case CompanionKind.Mobile:
+                    toy = go.AddComponent<MobileCompanionAI>();
+                    break;
+                case CompanionKind.Trap:
+                    toy = go.AddComponent<ChickenTrapCompanionAI>();
+                    break;
+                default:
+                    toy = go.AddComponent<StationaryCompanionAI>();
+                    break;
+            }
         }
         toy.Configure(def);
 

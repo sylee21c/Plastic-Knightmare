@@ -4,14 +4,9 @@ using UnityEngine;
 public sealed class CoinWallet : MonoBehaviour
 {
     private static CoinWallet instance;
-    public static CoinWallet Instance
-    {
-        get
-        {
-            if (instance == null) EnsureExists();
-            return instance;
-        }
-    }
+    // 프로퍼티에서 자동 생성 X. 필요한 곳에서 EnsureExists() 명시 호출.
+    // (teardown 도중 다른 OnDestroy 에서 참조 시 새 오브젝트 스폰되는 버그 방지)
+    public static CoinWallet Instance => instance;
 
     public static void EnsureExists()
     {

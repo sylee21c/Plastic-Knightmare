@@ -32,21 +32,7 @@ public sealed class CoinPickup : MonoBehaviour
         spinYaw = 0f;
 
         // 지면 높이 찾기
-        BuildingGridOverlay grid = FindAnyObjectByType<BuildingGridOverlay>();
-        float groundY;
-        if (grid != null && grid.CellSize > 0f)
-        {
-            groundY = grid.SurfaceY;
-        }
-        else if (Physics.Raycast(transform.position + Vector3.up * 3f, Vector3.down,
-                 out RaycastHit hit, 15f, ~0, QueryTriggerInteraction.Ignore))
-        {
-            groundY = hit.point.y;
-        }
-        else
-        {
-            groundY = transform.position.y;
-        }
+        float groundY = FindGroundY();
         baseY = groundY + floatHeight;
 
         Vector3 pos = transform.position;
@@ -70,8 +56,50 @@ public sealed class CoinPickup : MonoBehaviour
         }
     }
 
+    private float FindGroundY()
+    {
+        if (TryFindGroundBelow(out float groundY))
+        {
+            return groundY;
+        }
+
+        BuildingGridOverlay grid = FindAnyObjectByType<BuildingGridOverlay>();
+        if (grid != null && grid.CellSize > 0f)
+        {
+            return grid.SurfaceY;
+        }
+
+        return transform.position.y;
+    }
+
+    private bool TryFindGroundBelow(out float groundY)
+    {
+        groundY = transform.position.y;
+        Vector3 rayStart = transform.position + Vector3.up * 5f;
+        RaycastHit[] hits = Physics.RaycastAll(rayStart, Vector3.down, 50f, ~0, QueryTriggerInteraction.Ignore);
+        if (hits == null || hits.Length == 0)
+        {
+            return false;
+        }
+
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        foreach (RaycastHit hit in hits)
+        {
+            Transform hitTransform = hit.collider.transform;
+            if (hitTransform == transform || hitTransform.IsChildOf(transform))
+            {
+                continue;
+            }
+
+            groundY = hit.point.y;
+            return true;
+        }
+
+        return false;
+    }
+
     // Bronze/Silver/Gold 메쉬 크기가 서로 달라도 최종 지름을 targetDiameter 로 통일.
-    // Mesh.bounds (mesh-local) 를 직접 읽어 자식 스케일 누적까지 반영 → 안정적.
+    // Mesh.bounds (mesh-local) 를 직접 읽어 자식 스케일 누적까지 반영 -> 안정적.
     private void NormalizeVisualSize()
     {
         if (targetDiameter <= 0f)

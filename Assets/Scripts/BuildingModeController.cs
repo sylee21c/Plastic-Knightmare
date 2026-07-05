@@ -196,6 +196,11 @@ public sealed class BuildingModeController : MonoBehaviour
         if (player == null)
         {
             GameObject playerObject = GameObject.Find(playerName);
+            if (playerObject == null)
+            {
+                playerObject = GameObject.FindWithTag("Player");
+            }
+
             if (playerObject != null)
             {
                 player = playerObject.transform;
@@ -205,6 +210,10 @@ public sealed class BuildingModeController : MonoBehaviour
         if (gridOverlay == null)
         {
             gridOverlay = FindAnyObjectByType<BuildingGridOverlay>();
+        }
+        if (gridOverlay != null && gridOverlay.CellSize <= 0f)
+        {
+            gridOverlay.RebuildGrid();
         }
 
         if (sceneCamera == null)
@@ -298,7 +307,7 @@ public sealed class BuildingModeController : MonoBehaviour
         PlaceBrick(previewBrick, selectedBrick, placement, stackIndex);
         if (previewMaterial != null)
         {
-            previewMaterial.color = canBuildOnHighlightedCell ? previewColor : blockedPreviewColor;
+            SetPreviewMaterialColor(previewMaterial, canBuildOnHighlightedCell ? previewColor : blockedPreviewColor);
         }
     }
 
@@ -386,14 +395,14 @@ public sealed class BuildingModeController : MonoBehaviour
         companionPreview.transform.rotation = Quaternion.Euler(0f, companionYaw, 0f);
 
         if (companionPreviewMaterial != null)
-            companionPreviewMaterial.color = canPlace ? previewColor : blockedPreviewColor;
+            SetPreviewMaterialColor(companionPreviewMaterial, canPlace ? previewColor : blockedPreviewColor);
     }
 
     private bool TryGetTargetCell(out Vector2Int targetCell, out Vector3 floorPoint)
     {
         targetCell = default;
         floorPoint = default;
-        if (player == null || gridOverlay == null || gridOverlay.CellSize <= 0f)
+        if (gridOverlay == null || gridOverlay.CellSize <= 0f)
         {
             return false;
         }
@@ -1499,13 +1508,49 @@ public sealed class BuildingModeController : MonoBehaviour
 
     private static void ConfigurePreviewMaterial(Material material)
     {
+        if (material == null)
+        {
+            return;
+        }
+
+        Color color = material.color;
+        if (material.HasProperty("_BaseColor"))
+        {
+            material.SetColor("_BaseColor", color);
+        }
+        if (material.HasProperty("_Color"))
+        {
+            material.SetColor("_Color", color);
+        }
+
         material.SetFloat("_Surface", 1f);
         material.SetFloat("_Blend", 0f);
         material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
         material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
         material.SetInt("_ZWrite", 0);
         material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        material.EnableKeyword("_ALPHAPREMULTIPLY_OFF");
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
         material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+    }
+
+    private static void SetPreviewMaterialColor(Material material, Color color)
+    {
+        if (material == null)
+        {
+            return;
+        }
+
+        material.color = color;
+        if (material.HasProperty("_BaseColor"))
+        {
+            material.SetColor("_BaseColor", color);
+        }
+        if (material.HasProperty("_Color"))
+        {
+            material.SetColor("_Color", color);
+        }
     }
 
     private static Vector3 GetMousePosition()

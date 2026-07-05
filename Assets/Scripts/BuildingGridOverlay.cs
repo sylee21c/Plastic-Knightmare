@@ -9,6 +9,8 @@ public sealed class BuildingGridOverlay : MonoBehaviour
     [SerializeField, Min(1)] private int cellsPerFloorSide = 4;
     [SerializeField, Min(0.001f)] private float lineWidth = 0.025f;
     [SerializeField] private float yOffset = 0.018f;
+    [SerializeField, Min(0.01f)] private float floorHeightTolerance = 0.35f;
+    [SerializeField, Range(0f, 1f)] private float floorUpDotThreshold = 0.75f;
     [SerializeField] private Color lineColor = new Color(0.08f, 0.18f, 0.22f, 0.38f);
 
     private const string GridMeshName = "Generated Building Grid";
@@ -33,6 +35,7 @@ public sealed class BuildingGridOverlay : MonoBehaviour
     {
         cellsPerFloorSide = Mathf.Max(1, cellsPerFloorSide);
         lineWidth = Mathf.Max(0.001f, lineWidth);
+        floorHeightTolerance = Mathf.Max(0.01f, floorHeightTolerance);
 
         if (isActiveAndEnabled)
         {
@@ -96,7 +99,7 @@ public sealed class BuildingGridOverlay : MonoBehaviour
     {
         EnsureComponents();
 
-        List<Bounds> floorBounds = CollectFloorBounds();
+        List<Bounds> floorBounds = FilterToPrimaryFloorHeight(CollectFloorBounds());
         if (floorBounds.Count == 0)
         {
             ClearGrid();
@@ -195,7 +198,7 @@ public sealed class BuildingGridOverlay : MonoBehaviour
 
         if (candidate.name.StartsWith(floorNamePrefix, System.StringComparison.Ordinal))
         {
-            if (TryGetCombinedRendererBounds(candidate, out Bounds bounds))
+            if (TryGetCombinedRendererBounds(candidate, out Bounds bounds) && IsLikelyPlayableFloor(candidate, bounds))
             {
                 floorBounds.Add(bounds);
             }
@@ -207,6 +210,59 @@ public sealed class BuildingGridOverlay : MonoBehaviour
         {
             CollectFloorBounds(candidate.GetChild(i), floorBounds);
         }
+    }
+
+    private List<Bounds> FilterToPrimaryFloorHeight(List<Bounds> boundsList)
+    {
+        if (boundsList.Count <= 1)
+        {
+            return boundsList;
+        }
+
+        int bestCount = 0;
+        float bestBandCenter = boundsList[0].max.y;
+        for (int i = 0; i < boundsList.Count; i++)
+        {
+            float candidateCenter = boundsList[i].max.y;
+            int count = 0;
+            for (int j = 0; j < boundsList.Count; j++)
+            {
+                if (Mathf.Abs(boundsList[j].max.y - candidateCenter) <= floorHeightTolerance)
+                {
+                    count++;
+                }
+            }
+
+            if (count > bestCount || (count == bestCount && candidateCenter < bestBandCenter))
+            {
+                bestCount = count;
+                bestBandCenter = candidateCenter;
+            }
+        }
+
+        List<Bounds> filtered = new List<Bounds>(boundsList.Count);
+        foreach (Bounds bounds in boundsList)
+        {
+            if (Mathf.Abs(bounds.max.y - bestBandCenter) <= floorHeightTolerance)
+            {
+                filtered.Add(bounds);
+            }
+        }
+
+        return filtered.Count > 0 ? filtered : boundsList;
+    }
+
+    private bool IsLikelyPlayableFloor(Transform candidate, Bounds bounds)
+    {
+        if (!candidate.gameObject.activeInHierarchy)
+        {
+            return false;
+        }
+
+        float upDot = Mathf.Abs(Vector3.Dot(candidate.up.normalized, Vector3.up));
+        float horizontalSize = Mathf.Max(bounds.size.x, bounds.size.z);
+        bool hasFlatWorldBounds = horizontalSize > Mathf.Epsilon && bounds.size.y <= horizontalSize * 0.35f;
+        return upDot >= floorUpDotThreshold || hasFlatWorldBounds;
     }
 
     private static bool TryGetCombinedRendererBounds(Transform root, out Bounds combinedBounds)

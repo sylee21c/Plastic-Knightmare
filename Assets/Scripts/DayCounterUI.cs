@@ -61,6 +61,7 @@ public sealed class DayCounterUI : MonoBehaviour
         }
 
         AutoDetectPinnedRoot();
+        NormalizePinnedCanvas();
         Refresh(true);
     }
 
@@ -111,6 +112,51 @@ public sealed class DayCounterUI : MonoBehaviour
         pinnedRoot.pivot = new Vector2(0f, 1f);
         if (pinnedRoot.anchoredPosition != pinnedAnchoredPosition)
             pinnedRoot.anchoredPosition = pinnedAnchoredPosition;
+    }
+
+    private void NormalizePinnedCanvas()
+    {
+        Canvas canvas = null;
+        if (pinnedRoot != null)
+            canvas = pinnedRoot.GetComponent<Canvas>();
+
+        if (canvas != null)
+            pinnedRoot = GetPrimaryVisualRoot();
+        else if (pinnedRoot != null)
+            canvas = pinnedRoot.GetComponentInParent<Canvas>();
+
+        if (canvas == null) return;
+
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = Mathf.Max(canvas.sortingOrder, 46);
+
+        CanvasScaler scaler = canvas.GetComponent<CanvasScaler>();
+        if (scaler != null)
+        {
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+        }
+
+        RectTransform canvasRect = canvas.transform as RectTransform;
+        if (canvasRect != null && canvasRect.parent != null)
+        {
+            canvasRect.SetParent(null, false);
+            canvasRect.localRotation = Quaternion.identity;
+            canvasRect.localScale = Vector3.one;
+            canvasRect.anchoredPosition = Vector2.zero;
+            canvasRect.sizeDelta = Vector2.zero;
+        }
+    }
+
+    private RectTransform GetPrimaryVisualRoot()
+    {
+        Transform visual = null;
+        if (tmpText != null) visual = tmpText.transform;
+        else if (legacyText != null) visual = legacyText.transform;
+        else if (phaseIcon != null) visual = phaseIcon.transform;
+
+        return visual != null ? visual.GetComponent<RectTransform>() : pinnedRoot;
     }
 
     private void OnDestroy()

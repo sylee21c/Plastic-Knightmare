@@ -111,14 +111,9 @@ public abstract class CompanionToy : MonoBehaviour
         for (int i = 0; i < hits.Length; i++)
         {
             Collider hitCollider = hits[i].collider;
-            if (hitCollider == null || hitCollider.isTrigger) continue;
-            if (hitCollider.transform == transform || hitCollider.transform.IsChildOf(transform)) continue;
+            if (ShouldIgnoreMovementCollider(hitCollider)) continue;
             if (Mathf.Abs(hits[i].normal.y) > 0.5f) continue;
-            if (hits[i].distance <= skin)
-            {
-                allowedDistance = 0f;
-                continue;
-            }
+            if (hits[i].distance <= skin) continue;
 
             allowedDistance = Mathf.Min(allowedDistance, Mathf.Max(0f, hits[i].distance - skin));
         }
@@ -185,9 +180,7 @@ public abstract class CompanionToy : MonoBehaviour
         for (int i = 0; i < overlaps.Length; i++)
         {
             Collider other = overlaps[i];
-            if (other == null || other.isTrigger) continue;
-            if (other == mainCollider) continue;
-            if (other.transform == transform || other.transform.IsChildOf(transform)) continue;
+            if (ShouldIgnoreMovementCollider(other)) continue;
 
             if (!Physics.ComputePenetration(
                 mainCollider,
@@ -204,11 +197,45 @@ public abstract class CompanionToy : MonoBehaviour
 
             if (penetrationDistance <= 0.001f) continue;
             if (Mathf.Abs(direction.y) > 0.65f) continue;
+            if (IsMovingOutOfExistingOverlap(other, penetrationDistance)) continue;
 
             return true;
         }
 
         return false;
+    }
+
+    private bool ShouldIgnoreMovementCollider(Collider other)
+    {
+        if (other == null || other.isTrigger) return true;
+        if (other == mainCollider) return true;
+        if (other.transform == transform || other.transform.IsChildOf(transform)) return true;
+        if (other.GetComponentInParent<GhostAI>() != null) return true;
+        if (other.GetComponentInParent<PlayerController>() != null) return true;
+        if (other.GetComponentInParent<CoinPickup>() != null) return true;
+        if (other.GetComponentInParent<BuildableCellMarker>() != null) return true;
+        return false;
+    }
+
+    private bool IsMovingOutOfExistingOverlap(Collider other, float candidatePenetration)
+    {
+        if (other == null || mainCollider == null) return false;
+
+        if (!Physics.ComputePenetration(
+            mainCollider,
+            mainCollider.transform.position,
+            mainCollider.transform.rotation,
+            other,
+            other.transform.position,
+            other.transform.rotation,
+            out Vector3 currentDirection,
+            out float currentPenetration))
+        {
+            return false;
+        }
+
+        if (Mathf.Abs(currentDirection.y) > 0.65f) return true;
+        return candidatePenetration <= currentPenetration + 0.002f;
     }
 
     public void Configure(CompanionDefinition def)
@@ -225,6 +252,7 @@ public abstract class CompanionToy : MonoBehaviour
         SFXManager.PlayGlobal(DeathSfx);
         StopAllCoroutines();
         StartCoroutine(DeathRoutine());
+        StartCoroutine(ForceDestroyAfterRealtime(Mathf.Max(0.01f, deathFadeDuration) + 0.25f));
     }
 
     private void EnsurePhysicalCollision()
@@ -291,7 +319,7 @@ public abstract class CompanionToy : MonoBehaviour
             Renderer renderer = renderers[i];
             if (renderer == null) continue;
 
-            Material material = renderer.material;
+            Material material = GetRuntimeMaterial(renderer);
             if (material != null && material.HasProperty("_Color"))
             {
                 PrepareTransparentMaterial(material);
@@ -307,7 +335,7 @@ public abstract class CompanionToy : MonoBehaviour
 
         while (elapsed < duration)
         {
-            elapsed += Time.deltaTime;
+            elapsed += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(elapsed / duration);
             float alpha = 1f - t;
             float easedT = 1f - Mathf.Pow(1f - t, 3f);
@@ -317,14 +345,49 @@ public abstract class CompanionToy : MonoBehaviour
                 if (!canFade[i] || renderers[i] == null) continue;
                 Color color = originalColors[i];
                 color.a = alpha;
-                renderers[i].material.color = color;
+                Material material = GetRuntimeMaterial(renderers[i]);
+                if (material != null && material.HasProperty("_Color"))
+                    material.color = color;
             }
 
             transform.rotation = Quaternion.Slerp(startRotation, endRotation, easedT);
             yield return null;
         }
 
+        HideRenderers();
         Destroy(gameObject);
+    }
+
+    private IEnumerator ForceDestroyAfterRealtime(float seconds)
+    {
+        yield return new WaitForSecondsRealtime(Mathf.Max(0.01f, seconds));
+        if (this == null) yield break;
+        HideRenderers();
+        Destroy(gameObject);
+    }
+
+    private void HideRenderers()
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            if (renderers[i] != null)
+                renderers[i].enabled = false;
+        }
+    }
+
+    private static Material GetRuntimeMaterial(Renderer renderer)
+    {
+        if (renderer == null) return null;
+        try
+        {
+            return renderer.material;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[CompanionToy] Could not access death material on {renderer.name}: {ex.Message}");
+            return null;
+        }
     }
 
     private static void PrepareTransparentMaterial(Material material)

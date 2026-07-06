@@ -1,3 +1,4 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -23,6 +24,10 @@ public sealed class BedHealthUI : MonoBehaviour
     [Header("Animation")]
     [Tooltip("초당 비율 감소 속도")]
     [SerializeField] private float animationSpeed = 2.5f;
+
+    [Header("Label Font")]
+    [SerializeField] private TMP_FontAsset labelFontAsset;
+    [SerializeField] private string labelFontResourcePath = "Fonts & Materials/온글잎 박다현체 SDF";
 
     private Canvas canvas;
     private Image fillImage;
@@ -124,12 +129,12 @@ public sealed class BedHealthUI : MonoBehaviour
         lblRect.pivot = new Vector2(0.5f, 1f);
         lblRect.anchoredPosition = new Vector2(0f, -4f);
         lblRect.sizeDelta = new Vector2(0f, 20f);
-        Text lblText = lbl.AddComponent<Text>();
+        TMP_Text lblText = lbl.AddComponent<TextMeshProUGUI>();
         lblText.text = label;
-        lblText.alignment = TextAnchor.MiddleCenter;
-        lblText.font = GetDefaultFont();
-        lblText.fontSize = 15;
-        lblText.fontStyle = FontStyle.Bold;
+        lblText.alignment = TextAlignmentOptions.Center;
+        lblText.font = GetLabelFont();
+        lblText.fontSize = 20f;
+        lblText.fontStyle = FontStyles.Normal;
         lblText.color = new Color(0.9f, 0.9f, 0.9f, 1f);
         lblText.raycastTarget = false;
 
@@ -206,5 +211,13 @@ public sealed class BedHealthUI : MonoBehaviour
     {
         Font f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         return f != null ? f : Resources.GetBuiltinResource<Font>("Arial.ttf");
+    }
+
+    private TMP_FontAsset GetLabelFont()
+    {
+        if (labelFontAsset != null) return labelFontAsset;
+        if (!string.IsNullOrEmpty(labelFontResourcePath))
+            labelFontAsset = Resources.Load<TMP_FontAsset>(labelFontResourcePath);
+        return labelFontAsset;
     }
 }

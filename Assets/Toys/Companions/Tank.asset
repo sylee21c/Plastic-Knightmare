@@ -20,16 +20,16 @@ MonoBehaviour:
   placedYOffset: 0
   spawnScale: 3.3
   kind: 0
-  maxHealth: 150
+  maxHealth: 400
   aggroRange: 5.5
-  attackRange: 2.5
+  attackRange: 3
   attackDamage: 25
-  attackCooldown: 3
+  attackCooldown: 2
   fireMaxAngle: 5
   targetLayers:
     serializedVersion: 2
     m_Bits: 4294967295
-  moveSpeed: 1
+  moveSpeed: 2
   patrolMoveSpeed: 0.8
   patrolRadius: 4
   patrolPointReachDistance: 1

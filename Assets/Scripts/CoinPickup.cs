@@ -58,15 +58,15 @@ public sealed class CoinPickup : MonoBehaviour
 
     private float FindGroundY()
     {
-        if (TryFindGroundBelow(out float groundY))
-        {
-            return groundY;
-        }
-
         BuildingGridOverlay grid = FindAnyObjectByType<BuildingGridOverlay>();
         if (grid != null && grid.CellSize > 0f)
         {
             return grid.SurfaceY;
+        }
+
+        if (TryFindGroundBelow(out float groundY))
+        {
+            return groundY;
         }
 
         return transform.position.y;
@@ -85,8 +85,7 @@ public sealed class CoinPickup : MonoBehaviour
         System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
         foreach (RaycastHit hit in hits)
         {
-            Transform hitTransform = hit.collider.transform;
-            if (hitTransform == transform || hitTransform.IsChildOf(transform))
+            if (!IsGroundCandidate(hit))
             {
                 continue;
             }
@@ -96,6 +95,32 @@ public sealed class CoinPickup : MonoBehaviour
         }
 
         return false;
+    }
+
+    private bool IsGroundCandidate(RaycastHit hit)
+    {
+        Collider hitCollider = hit.collider;
+        if (hitCollider == null) return false;
+
+        Transform hitTransform = hitCollider.transform;
+        if (hitTransform == transform || hitTransform.IsChildOf(transform))
+        {
+            return false;
+        }
+
+        if (Vector3.Dot(hit.normal, Vector3.up) < 0.65f)
+        {
+            return false;
+        }
+
+        if (hitCollider.GetComponentInParent<CoinPickup>() != null) return false;
+        if (hitCollider.GetComponentInParent<GhostAI>() != null) return false;
+        if (hitCollider.GetComponentInParent<CompanionToy>() != null) return false;
+        if (hitCollider.GetComponentInParent<BuildingPlacedBrick>() != null) return false;
+        if (hitCollider.GetComponentInParent<PlayerController>() != null) return false;
+        if (hitCollider.GetComponentInParent<BuildableCellMarker>() != null) return false;
+
+        return true;
     }
 
     // Bronze/Silver/Gold 메쉬 크기가 서로 달라도 최종 지름을 targetDiameter 로 통일.

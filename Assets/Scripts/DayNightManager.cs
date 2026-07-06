@@ -22,6 +22,9 @@ public sealed class DayNightManager : MonoBehaviour
     [SerializeField] private float transitionDuration = 3f;
     public float TransitionDuration => transitionDuration;
 
+    [Header("Debug Start")]
+    [SerializeField, Min(1)] private int startDay = 1;
+
     public Phase CurrentPhase { get; private set; } = Phase.Day;
     public int DayCount { get; private set; } = 1;
 
@@ -40,6 +43,7 @@ public sealed class DayNightManager : MonoBehaviour
             return;
         }
         Instance = this;
+        DayCount = Mathf.Max(1, startDay);
     }
 
     private void Start()

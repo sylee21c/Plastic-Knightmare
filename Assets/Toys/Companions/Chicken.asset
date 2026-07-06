@@ -42,8 +42,8 @@ MonoBehaviour:
   projectileVisualRotationOffset: {x: 100, y: 0, z: 0}
   projectileTrailColor: {r: 1, g: 0.86, b: 0.24, a: 0.9}
   trapTriggerOnlyAtNight: 1
-  trapTriggerOnlyWhenGhostEntersPlacedCell: 1
-  trapFallbackTriggerRadius: 0.55
+  trapTriggerOnlyWhenGhostEntersPlacedCell: 0
+  trapFallbackTriggerRadius: 1.2
   trapTriggerCooldown: 0.4
   trapSelfDamageOnTrigger: 25
   trapEffectRadius: 5

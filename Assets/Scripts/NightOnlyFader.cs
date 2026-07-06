@@ -2,78 +2,170 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-// 이 오브젝트는 밤에만 나타남.
-// 낮 → 밤: 페이드 인. 밤 → 낮: 페이드 아웃.
-// DayNightManager 의 transitionDuration 에 자동 동기화.
 public sealed class NightOnlyFader : MonoBehaviour
 {
     [Header("Fade")]
-    [Tooltip("비어있으면 DayNightManager.transitionDuration 을 자동 사용")]
     [SerializeField] private float overrideFadeDuration = 0f;
-    [Tooltip("게임 시작 시 낮이면 즉시 투명하게")]
     [SerializeField] private bool startInvisibleOnDay = true;
+    [SerializeField] private bool useMaterialFade = false;
 
     [Header("Debug")]
     [SerializeField] private bool logShaderInfo = false;
 
     private Renderer[] renderers;
     private Material[] cachedMaterials;
+    private Animator[] animators;
     private Coroutine activeFade;
     private DayNightManager.Phase lastPhase = DayNightManager.Phase.Day;
     private float currentAlpha = 1f;
+    private bool subscribedToPhaseEvents;
+
+    private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+    private static readonly int ColorId = Shader.PropertyToID("_Color");
+    private static readonly int TintColorId = Shader.PropertyToID("_TintColor");
 
     private void Awake()
     {
-        // 자식 포함 모든 렌더러 수집 → 각 렌더러의 sub-material 인스턴스 캐시
         renderers = GetComponentsInChildren<Renderer>(true);
-        List<Material> mats = new List<Material>();
-        foreach (Renderer r in renderers)
+        animators = GetComponentsInChildren<Animator>(true);
+
+        foreach (Animator animator in animators)
         {
-            if (r == null) continue;
-            foreach (Material mat in r.materials) // 인스턴스 자동 생성 (다른 오브젝트 영향 X)
+            if (animator != null)
+                animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        }
+
+        List<Material> mats = new List<Material>();
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer == null) continue;
+
+            foreach (Material material in renderer.materials)
             {
-                ForceTransparentSurface(mat);
-                mats.Add(mat);
+                if (useMaterialFade)
+                    ForceTransparentSurface(material);
+                mats.Add(material);
             }
         }
+
         cachedMaterials = mats.ToArray();
     }
 
     private void Start()
     {
-        DayNightManager mgr = DayNightManager.Instance;
-        DayNightManager.Phase phase = mgr != null ? mgr.CurrentPhase : DayNightManager.Phase.Day;
-        lastPhase = phase;
+        TrySubscribeToPhaseEvents();
 
-        float initialAlpha = phase == DayNightManager.Phase.Night ? 1f : (startInvisibleOnDay ? 0f : 1f);
-        ApplyVisibility(initialAlpha);
-        SetRenderersEnabled(initialAlpha > 0.001f);
+        DayNightManager manager = DayNightManager.Instance;
+        DayNightManager.Phase phase = manager != null
+            ? manager.CurrentPhase
+            : DayNightManager.Phase.Day;
+
+        lastPhase = phase;
+        bool visible = phase == DayNightManager.Phase.Night || !startInvisibleOnDay;
+        ApplyVisibility(visible ? 1f : 0f);
+        SetRenderersEnabled(visible);
     }
 
     private void Update()
     {
-        DayNightManager mgr = DayNightManager.Instance;
-        if (mgr == null) return;
+        TrySubscribeToPhaseEvents();
 
-        if (mgr.CurrentPhase != lastPhase)
+        DayNightManager manager = DayNightManager.Instance;
+        if (manager == null) return;
+
+        if (manager.CurrentPhase != lastPhase)
         {
-            lastPhase = mgr.CurrentPhase;
+            lastPhase = manager.CurrentPhase;
             float target = lastPhase == DayNightManager.Phase.Night ? 1f : 0f;
-            StartFade(target, GetFadeDuration(mgr));
+            StartFade(target, GetFadeDuration(manager));
+        }
+
+        if (manager.CurrentPhase == DayNightManager.Phase.Night
+            && activeFade == null
+            && (!AnyRendererEnabled() || currentAlpha < 0.999f))
+        {
+            SetFullyVisible();
         }
     }
 
-    private float GetFadeDuration(DayNightManager mgr)
+    private void OnDestroy()
+    {
+        if (subscribedToPhaseEvents && DayNightManager.Instance != null)
+        {
+            DayNightManager.Instance.OnNightBegin -= HandleNightBegin;
+            DayNightManager.Instance.OnDayBegin -= HandleDayBegin;
+        }
+
+        subscribedToPhaseEvents = false;
+    }
+
+    private void TrySubscribeToPhaseEvents()
+    {
+        if (subscribedToPhaseEvents || DayNightManager.Instance == null) return;
+
+        DayNightManager.Instance.OnNightBegin += HandleNightBegin;
+        DayNightManager.Instance.OnDayBegin += HandleDayBegin;
+        subscribedToPhaseEvents = true;
+    }
+
+    private void HandleNightBegin()
+    {
+        lastPhase = DayNightManager.Phase.Night;
+        SetFullyVisible();
+    }
+
+    private void HandleDayBegin()
+    {
+        lastPhase = DayNightManager.Phase.Day;
+        StartFade(0f, GetFadeDuration(DayNightManager.Instance));
+    }
+
+    private void SetFullyVisible()
+    {
+        if (activeFade != null)
+        {
+            StopCoroutine(activeFade);
+            activeFade = null;
+        }
+
+        ApplyVisibility(1f);
+        SetRenderersEnabled(true);
+    }
+
+    private bool AnyRendererEnabled()
+    {
+        if (renderers == null) return false;
+
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer != null && renderer.enabled)
+                return true;
+        }
+
+        return false;
+    }
+
+    private float GetFadeDuration(DayNightManager manager)
     {
         if (overrideFadeDuration > 0f) return overrideFadeDuration;
-        if (mgr != null && mgr.TransitionDuration > 0f) return mgr.TransitionDuration;
+        if (manager != null && manager.TransitionDuration > 0f)
+            return manager.TransitionDuration;
         return 3f;
     }
 
     private void StartFade(float target, float duration)
     {
-        if (activeFade != null) StopCoroutine(activeFade);
-        SetRenderersEnabled(true); // 페이드 진행 중엔 항상 켬
+        if (!useMaterialFade)
+        {
+            currentAlpha = target;
+            SetRenderersEnabled(target > 0.001f);
+            return;
+        }
+
+        if (activeFade != null)
+            StopCoroutine(activeFade);
+
+        SetRenderersEnabled(true);
         activeFade = StartCoroutine(FadeRoutine(currentAlpha, target, duration));
     }
 
@@ -81,6 +173,7 @@ public sealed class NightOnlyFader : MonoBehaviour
     {
         float elapsed = 0f;
         duration = Mathf.Max(0.01f, duration);
+
         while (elapsed < duration)
         {
             elapsed += Time.deltaTime;
@@ -88,138 +181,109 @@ public sealed class NightOnlyFader : MonoBehaviour
             ApplyVisibility(Mathf.Lerp(from, to, t));
             yield return null;
         }
+
         ApplyVisibility(to);
-        if (to <= 0.001f) SetRenderersEnabled(false); // 완전 사라졌으면 렌더 비활성
+        if (to <= 0.001f)
+            SetRenderersEnabled(false);
+
         activeFade = null;
     }
-
-    // ── 시각적 페이드 적용 (알파만, 스케일은 절대 건드리지 않음) ────
-
-    // visibility: 0=hidden, 1=visible
-    private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
-    private static readonly int ColorId = Shader.PropertyToID("_Color");
-    private static readonly int TintColorId = Shader.PropertyToID("_TintColor");
 
     private void ApplyVisibility(float visibility)
     {
         currentAlpha = visibility;
+        if (!useMaterialFade || cachedMaterials == null) return;
 
-        if (cachedMaterials == null) return;
-
-        foreach (Material mat in cachedMaterials)
+        foreach (Material material in cachedMaterials)
         {
-            if (mat == null) continue;
-            if (mat.HasProperty(BaseColorId))
+            if (material == null) continue;
+
+            if (material.HasProperty(BaseColorId))
             {
-                Color c = mat.GetColor(BaseColorId);
-                c.a = visibility;
-                mat.SetColor(BaseColorId, c);
+                Color color = material.GetColor(BaseColorId);
+                color.a = visibility;
+                material.SetColor(BaseColorId, color);
             }
-            if (mat.HasProperty(ColorId))
+
+            if (material.HasProperty(ColorId))
             {
-                Color c = mat.GetColor(ColorId);
-                c.a = visibility;
-                mat.SetColor(ColorId, c);
+                Color color = material.GetColor(ColorId);
+                color.a = visibility;
+                material.SetColor(ColorId, color);
             }
-            if (mat.HasProperty(TintColorId))
+
+            if (material.HasProperty(TintColorId))
             {
-                Color c = mat.GetColor(TintColorId);
-                c.a = visibility;
-                mat.SetColor(TintColorId, c);
+                Color color = material.GetColor(TintColorId);
+                color.a = visibility;
+                material.SetColor(TintColorId, color);
             }
         }
     }
 
-    private void SetRenderersEnabled(bool enabled)
+    private void SetRenderersEnabled(bool visible)
     {
         if (renderers == null) return;
-        foreach (Renderer r in renderers)
-            if (r != null) r.enabled = enabled;
+
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer != null)
+                renderer.enabled = visible;
+        }
     }
 
-    // URP Lit / Built-in Standard 를 Transparent 모드로 강제 → 알파값 실제 반영
-    // 알파 미지원 커스텀 셰이더면 URP Lit 로 자동 교체.
-    private void ForceTransparentSurface(Material mat)
+    private void ForceTransparentSurface(Material material)
     {
-        if (mat == null) return;
+        if (material == null) return;
 
-        if (logShaderInfo && mat.shader != null)
-            Debug.Log($"[NightOnlyFader] Material '{mat.name}' shader before: {mat.shader.name}");
+        if (logShaderInfo && material.shader != null)
+            Debug.Log($"[NightOnlyFader] Material '{material.name}' shader before: {material.shader.name}");
 
-        if (mat.HasProperty("_Surface"))
+        if (material.HasProperty("_Surface"))
         {
-            SetupUrpTransparent(mat);
-            return;
-        }
-        if (mat.HasProperty("_Mode"))
-        {
-            SetupBuiltinFade(mat);
+            SetupUrpTransparent(material);
             return;
         }
 
-        // 알파 지원 프로퍼티가 하나도 없는 셰이더 → URP Lit 로 교체하고 텍스처/컬러 복원
-        Shader replacement = Shader.Find("Universal Render Pipeline/Lit");
-        if (replacement == null) replacement = Shader.Find("Standard");
-        if (replacement == null)
+        if (material.HasProperty("_Mode"))
         {
-            if (logShaderInfo)
-                Debug.LogWarning($"[NightOnlyFader] '{mat.name}' 셰이더가 알파 페이드를 미지원, 대체 셰이더도 못 찾음.");
+            SetupBuiltinFade(material);
             return;
         }
-
-        Texture mainTex = null;
-        if (mat.HasProperty("_MainTex")) mainTex = mat.GetTexture("_MainTex");
-        else if (mat.HasProperty("_BaseMap")) mainTex = mat.GetTexture("_BaseMap");
-
-        Color mainColor = Color.white;
-        if (mat.HasProperty("_BaseColor")) mainColor = mat.GetColor("_BaseColor");
-        else if (mat.HasProperty("_Color")) mainColor = mat.color;
-        else if (mat.HasProperty("_TintColor")) mainColor = mat.GetColor("_TintColor");
-
-        mat.shader = replacement;
-
-        if (mainTex != null)
-        {
-            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", mainTex);
-            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", mainTex);
-        }
-        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", mainColor);
-        if (mat.HasProperty("_Color")) mat.color = mainColor;
-
-        if (mat.HasProperty("_Surface")) SetupUrpTransparent(mat);
-        else if (mat.HasProperty("_Mode")) SetupBuiltinFade(mat);
 
         if (logShaderInfo)
-            Debug.Log($"[NightOnlyFader] Material '{mat.name}' shader after swap: {mat.shader.name}");
+            Debug.LogWarning($"[NightOnlyFader] Material '{material.name}' does not expose a supported alpha property.");
     }
 
-    private static void SetupUrpTransparent(Material mat)
+    private static void SetupUrpTransparent(Material material)
     {
-        mat.SetFloat("_Surface", 1f); // 0=Opaque, 1=Transparent
-        if (mat.HasProperty("_Blend"))     mat.SetFloat("_Blend", 0f);     // Alpha
-        if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 0f);
-        if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        if (mat.HasProperty("_ZWrite"))   mat.SetInt("_ZWrite", 0);
+        material.SetFloat("_Surface", 1f);
+        if (material.HasProperty("_Blend")) material.SetFloat("_Blend", 0f);
+        if (material.HasProperty("_AlphaClip")) material.SetFloat("_AlphaClip", 0f);
+        if (material.HasProperty("_SrcBlend"))
+            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        if (material.HasProperty("_DstBlend"))
+            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        if (material.HasProperty("_ZWrite")) material.SetInt("_ZWrite", 0);
 
-        mat.DisableKeyword("_SURFACE_TYPE_OPAQUE");
-        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        mat.DisableKeyword("_ALPHATEST_ON");
-        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-        mat.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_SURFACE_TYPE_OPAQUE");
+        material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
 
-        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
     }
 
-    private static void SetupBuiltinFade(Material mat)
+    private static void SetupBuiltinFade(Material material)
     {
-        mat.SetFloat("_Mode", 2f); // Fade
-        mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        mat.SetInt("_ZWrite", 0);
-        mat.DisableKeyword("_ALPHATEST_ON");
-        mat.EnableKeyword("_ALPHABLEND_ON");
-        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-        mat.renderQueue = 3000;
+        material.SetFloat("_Mode", 2f);
+        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        material.SetInt("_ZWrite", 0);
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = 3000;
     }
 }

@@ -6,6 +6,8 @@ using UnityEngine.UI;
 [ExecuteAlways]
 public sealed class BrickShopItem : MonoBehaviour
 {
+    public static event System.Action OnSuccessfulPurchase;
+
     [Header("Config (Inspector 조정)")]
     [SerializeField] private string itemName = "2x2 Brick";
     [Tooltip("BrickInventory 저장 키. BuildingHotbarUI/BrickDefinition displayName 과 일치해야 함 (예: \"2x2\", \"2x1\")")]
@@ -70,6 +72,7 @@ public sealed class BrickShopItem : MonoBehaviour
         BrickInventory.EnsureExists();
         BrickInventory.Instance.Add(inventoryKey, quantity);
         FlashPurchase(true);
+        OnSuccessfulPurchase?.Invoke();
         Debug.Log($"[BrickShopItem] {itemName} x{quantity} 구매 완료 ({total} coins) → 보유 {BrickInventory.Instance.GetCount(inventoryKey)}개");
     }
 

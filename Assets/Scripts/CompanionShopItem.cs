@@ -6,6 +6,8 @@ using UnityEngine.UI;
 [ExecuteAlways]
 public sealed class CompanionShopItem : MonoBehaviour
 {
+    public static event System.Action OnSuccessfulPurchase;
+
     [Header("Config")]
     [SerializeField] private CompanionDefinition definition;
     [SerializeField] private int unitPrice = 500;
@@ -86,6 +88,10 @@ public sealed class CompanionShopItem : MonoBehaviour
             CoinWallet.Instance.Add(refund);
 
         FlashPurchase(added > 0);
+        if (added > 0)
+        {
+            OnSuccessfulPurchase?.Invoke();
+        }
         Debug.Log($"[CompanionShopItem] {definition.displayName} x{added} 구매 완료 (환불 {refund})");
     }
 

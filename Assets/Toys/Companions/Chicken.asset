@@ -46,9 +46,9 @@ MonoBehaviour:
   trapFallbackTriggerRadius: 0.55
   trapTriggerCooldown: 0.4
   trapSelfDamageOnTrigger: 25
-  trapEffectRadius: 4
-  trapStunDuration: 5
-  trapKnockbackDistance: 5
+  trapEffectRadius: 5
+  trapStunDuration: 3
+  trapKnockbackDistance: 4
   trapKnockbackDuration: 0.22
   trapKnockbackAgainstGhostMovement: 1
   trapSquashDuration: 0.18

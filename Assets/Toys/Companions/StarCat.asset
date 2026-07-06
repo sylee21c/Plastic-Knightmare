@@ -23,7 +23,7 @@ MonoBehaviour:
   maxHealth: 75
   aggroRange: 9
   attackRange: 6
-  attackDamage: 15
+  attackDamage: 12
   attackCooldown: 1.4
   fireMaxAngle: 15
   targetLayers:
@@ -41,3 +41,16 @@ MonoBehaviour:
   muzzleLocalOffset: {x: 0, y: 0.5, z: 0.3}
   projectileVisualRotationOffset: {x: 150, y: 0, z: -90}
   projectileTrailColor: {r: 0.16, g: 0.62, b: 1, a: 0.9}
+  trapTriggerOnlyAtNight: 1
+  trapTriggerOnlyWhenGhostEntersPlacedCell: 1
+  trapFallbackTriggerRadius: 0.55
+  trapTriggerCooldown: 0.4
+  trapSelfDamageOnTrigger: 25
+  trapEffectRadius: 3
+  trapStunDuration: 1.6
+  trapKnockbackDistance: 1.2
+  trapKnockbackDuration: 0.22
+  trapKnockbackAgainstGhostMovement: 1
+  trapSquashDuration: 0.18
+  trapSquashReturnDuration: 0.16
+  trapTriggeredScaleMultiplier: {x: 1.25, y: 0.35, z: 1.25}

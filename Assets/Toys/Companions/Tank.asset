@@ -20,22 +20,37 @@ MonoBehaviour:
   placedYOffset: 0
   spawnScale: 3.3
   kind: 0
-  maxHealth: 100
+  maxHealth: 150
   aggroRange: 5.5
   attackRange: 2.5
-  attackDamage: 20
+  attackDamage: 25
   attackCooldown: 3
   fireMaxAngle: 5
   targetLayers:
     serializedVersion: 2
     m_Bits: 4294967295
   moveSpeed: 1
-  patrolMoveSpeed: 0.6
-  patrolRadius: 2
-  patrolPointReachDistance: 0.2
+  patrolMoveSpeed: 0.8
+  patrolRadius: 4
+  patrolPointReachDistance: 1
   patrolWaitTime: 0.4
   rotationSpeed: 8
   projectilePrefab: {fileID: 2086261179823682334, guid: 1471e98bb0946d847a15230e4b8cb13c, type: 3}
   projectileSpeed: 7
   projectileScale: 1
   muzzleLocalOffset: {x: 0, y: 0.5, z: 0.3}
+  projectileVisualRotationOffset: {x: 100, y: 0, z: 0}
+  projectileTrailColor: {r: 1, g: 0.86, b: 0.24, a: 0.9}
+  trapTriggerOnlyAtNight: 1
+  trapTriggerOnlyWhenGhostEntersPlacedCell: 1
+  trapFallbackTriggerRadius: 0.55
+  trapTriggerCooldown: 0.4
+  trapSelfDamageOnTrigger: 25
+  trapEffectRadius: 3
+  trapStunDuration: 1.6
+  trapKnockbackDistance: 1.2
+  trapKnockbackDuration: 0.22
+  trapKnockbackAgainstGhostMovement: 1
+  trapSquashDuration: 0.18
+  trapSquashReturnDuration: 0.16
+  trapTriggeredScaleMultiplier: {x: 1.25, y: 0.35, z: 1.25}

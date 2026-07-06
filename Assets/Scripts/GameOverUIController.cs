@@ -49,8 +49,8 @@ public sealed class GameOverUIController : MonoBehaviour
     [SerializeField] private float blackoutFadeDuration = 2.2f;
 
     [Header("Coin Penalty")]
-    [Tooltip("Game over removes this percentage of coins earned during the current night. 0.9 = lose 90%, keep 10%.")]
-    [SerializeField, Range(0f, 1f)] private float nightCoinLossPercent = 0.9f;
+    [Tooltip("Game over removes this percentage of coins earned during the current night. 0.5 = lose 50%, keep 50%.")]
+    [SerializeField, Range(0f, 1f)] private float nightCoinLossPercent = 0.5f;
 
     [Header("Fallback")]
     [Tooltip("씬에서 레퍼런스를 연결하지 않았을 때만 기본 UI 자식을 자동 생성합니다.")]

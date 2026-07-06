@@ -105,11 +105,7 @@ public abstract class CompanionToy : MonoBehaviour
         float distance = displacement.magnitude;
         float skin = 0.03f;
 
-        Bounds bounds = mainCollider.bounds;
-        float radius = Mathf.Max(0.05f, Mathf.Min(bounds.extents.x, bounds.extents.z));
-        Vector3 origin = bounds.center;
-        RaycastHit[] hits = Physics.SphereCastAll(origin, radius, direction,
-            distance + skin, ~0, QueryTriggerInteraction.Ignore);
+        RaycastHit[] hits = CastBody(direction, distance + skin);
         float allowedDistance = distance;
 
         for (int i = 0; i < hits.Length; i++)
@@ -118,7 +114,11 @@ public abstract class CompanionToy : MonoBehaviour
             if (hitCollider == null || hitCollider.isTrigger) continue;
             if (hitCollider.transform == transform || hitCollider.transform.IsChildOf(transform)) continue;
             if (Mathf.Abs(hits[i].normal.y) > 0.5f) continue;
-            if (hits[i].distance <= skin) continue;
+            if (hits[i].distance <= skin)
+            {
+                allowedDistance = 0f;
+                continue;
+            }
 
             allowedDistance = Mathf.Min(allowedDistance, Mathf.Max(0f, hits[i].distance - skin));
         }
@@ -126,17 +126,89 @@ public abstract class CompanionToy : MonoBehaviour
         // 그리드 경계 검사: 다음 위치가 유효 셀 밖이면 이동 거부.
         // (플레이 영역 벽이 없거나 얇아도 셀 기준으로 확실히 막음.)
         Vector3 candidate = transform.position + direction * allowedDistance;
-        if (!IsPositionOnFloor(candidate))
+        if (!CanMoveTo(candidate))
         {
             // 축별로 슬라이드 재시도 → 벽에 붙어서 옆으로 미끄러지듯 진행 가능.
             Vector3 sX = new Vector3(direction.x, 0f, 0f) * allowedDistance;
             Vector3 sZ = new Vector3(0f, 0f, direction.z) * allowedDistance;
-            if (IsPositionOnFloor(transform.position + sX)) return sX;
-            if (IsPositionOnFloor(transform.position + sZ)) return sZ;
+            if (CanMoveTo(transform.position + sX)) return sX;
+            if (CanMoveTo(transform.position + sZ)) return sZ;
             return Vector3.zero;
         }
 
         return direction * allowedDistance;
+    }
+
+    private RaycastHit[] CastBody(Vector3 direction, float distance)
+    {
+        if (mainCollider is BoxCollider box)
+        {
+            Vector3 center = box.transform.TransformPoint(box.center);
+            Vector3 halfExtents = Vector3.Scale(box.size * 0.5f, box.transform.lossyScale);
+            halfExtents = new Vector3(
+                Mathf.Max(0.05f, Mathf.Abs(halfExtents.x)),
+                Mathf.Max(0.05f, Mathf.Abs(halfExtents.y)),
+                Mathf.Max(0.05f, Mathf.Abs(halfExtents.z)));
+
+            return Physics.BoxCastAll(center, halfExtents, direction, box.transform.rotation,
+                distance, ~0, QueryTriggerInteraction.Ignore);
+        }
+
+        Bounds bounds = mainCollider.bounds;
+        float radius = Mathf.Max(0.05f, Mathf.Min(bounds.extents.x, bounds.extents.z));
+        return Physics.SphereCastAll(bounds.center, radius, direction,
+            distance, ~0, QueryTriggerInteraction.Ignore);
+    }
+
+    private bool CanMoveTo(Vector3 worldPosition)
+    {
+        return IsPositionOnFloor(worldPosition) && !WouldOverlapSolid(worldPosition);
+    }
+
+    private bool WouldOverlapSolid(Vector3 worldPosition)
+    {
+        if (mainCollider == null) return false;
+
+        Bounds bounds = mainCollider.bounds;
+        Vector3 centerOffset = bounds.center - transform.position;
+        Vector3 center = worldPosition + centerOffset;
+        Vector3 halfExtents = new Vector3(
+            Mathf.Max(0.05f, bounds.extents.x),
+            Mathf.Max(0.05f, bounds.extents.y),
+            Mathf.Max(0.05f, bounds.extents.z));
+
+        Collider[] overlaps = Physics.OverlapBox(center, halfExtents,
+            mainCollider.transform.rotation, ~0, QueryTriggerInteraction.Ignore);
+        Vector3 colliderOffset = mainCollider.transform.position - transform.position;
+        Vector3 testColliderPosition = worldPosition + colliderOffset;
+
+        for (int i = 0; i < overlaps.Length; i++)
+        {
+            Collider other = overlaps[i];
+            if (other == null || other.isTrigger) continue;
+            if (other == mainCollider) continue;
+            if (other.transform == transform || other.transform.IsChildOf(transform)) continue;
+
+            if (!Physics.ComputePenetration(
+                mainCollider,
+                testColliderPosition,
+                mainCollider.transform.rotation,
+                other,
+                other.transform.position,
+                other.transform.rotation,
+                out Vector3 direction,
+                out float penetrationDistance))
+            {
+                continue;
+            }
+
+            if (penetrationDistance <= 0.001f) continue;
+            if (Mathf.Abs(direction.y) > 0.65f) continue;
+
+            return true;
+        }
+
+        return false;
     }
 
     public void Configure(CompanionDefinition def)

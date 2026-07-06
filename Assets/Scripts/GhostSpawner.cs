@@ -44,6 +44,7 @@ public sealed class GhostSpawner : MonoBehaviour
     [SerializeField] private int maxGhostsAlive = 12;
     [Tooltip("이 밤의 마지막 유령이 사망하면 자동으로 낮으로 전환")]
     [SerializeField] private bool autoEndNight = true;
+    [SerializeField, Min(0)] private int endlessExtraGhostsPerNight = 3;
 
     [Header("Night Profiles (Element 0 = Night 1)")]
     [SerializeField] private NightProfile[] nightProfiles = new NightProfile[]
@@ -95,6 +96,7 @@ public sealed class GhostSpawner : MonoBehaviour
     private int ghostsSpawnedThisNight;
     private int currentNightIndex;
     private bool nightEnded;
+    private readonly NightProfile endlessProfile = new NightProfile();
     private readonly List<GameObject> activeGhosts = new List<GameObject>();
 
     public int TotalThisNight => GetCurrentProfile()?.totalGhosts ?? 0;
@@ -167,8 +169,7 @@ public sealed class GhostSpawner : MonoBehaviour
         ghostsSpawnedThisNight = 0;
         nightEnded = false;
         int dayCount = DayNightManager.Instance?.DayCount ?? 1;
-        currentNightIndex = Mathf.Clamp(dayCount - 1, 0,
-            Mathf.Max(0, (nightProfiles?.Length ?? 1) - 1));
+        currentNightIndex = Mathf.Max(0, dayCount - 1);
         NightProfile p = GetCurrentProfile();
         timer = p?.spawnInterval ?? 5f;
 
@@ -179,7 +180,24 @@ public sealed class GhostSpawner : MonoBehaviour
     private NightProfile GetCurrentProfile()
     {
         if (nightProfiles == null || nightProfiles.Length == 0) return null;
-        return nightProfiles[Mathf.Clamp(currentNightIndex, 0, nightProfiles.Length - 1)];
+
+        int finalIndex = nightProfiles.Length - 1;
+        if (currentNightIndex <= finalIndex)
+        {
+            return nightProfiles[Mathf.Clamp(currentNightIndex, 0, finalIndex)];
+        }
+
+        NightProfile finalProfile = nightProfiles[finalIndex];
+        if (finalProfile == null) return null;
+
+        int nightsAfterFinal = currentNightIndex - finalIndex;
+        endlessProfile.label = $"Night {currentNightIndex + 1}";
+        endlessProfile.totalGhosts = finalProfile.totalGhosts + endlessExtraGhostsPerNight * nightsAfterFinal;
+        endlessProfile.spawnInterval = finalProfile.spawnInterval;
+        endlessProfile.tier1Weight = finalProfile.tier1Weight;
+        endlessProfile.tier2Weight = finalProfile.tier2Weight;
+        endlessProfile.tier3Weight = finalProfile.tier3Weight;
+        return endlessProfile;
     }
 
     private bool SpawnGhostForNight(NightProfile profile)
